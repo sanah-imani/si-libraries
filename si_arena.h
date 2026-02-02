@@ -50,7 +50,9 @@ typedef enum {
     SIA_ERR_MALLOC_FAILED,
     SIA_ERR_COMMIT_FAILED,
     SIA_ERR_OUT_OF_MEMORY,
-    SIA_ERR_CANNOT_POP_MORE
+    SIA_ERR_CANNOT_POP_MORE,
+    SIA_ERR_REALLOC_FAILED,
+    SIA_ERR_INVALID_PTR
 } sia_error_code;
 
 typedef struct {
@@ -96,6 +98,7 @@ SIA_FUNC_DEF sia_u32 sia_get_align(si_arena* arena);
 
 SIA_FUNC_DEF void* sia_push(si_arena* arena, sia_u64 size);
 SIA_FUNC_DEF void* sia_push_zero(si_arena* arena, sia_u64 size);
+SIA_FUNC_DEF void* sia_realloc(si_arena* arena, void* ptr, sia_u64 old_size, sia_u64 new_size);
 
 SIA_FUNC_DEF void sia_pop(si_arena* arena, sia_u64 size);
 SIA_FUNC_DEF void sia_pop_to(si_arena* arena, sia_u64 pos);
@@ -194,6 +197,11 @@ extern "C" {
 #ifndef SIA_MEMSET
 #   include <string.h>
 #   define SIA_MEMSET memset
+#endif
+
+#ifndef SIA_MEMCPY
+#   include <string.h>
+#   define SIA_MEMCPY memcpy
 #endif
 
 #ifndef SIA_NO_STDIO
@@ -622,6 +630,136 @@ void* sia_push_zero(si_arena* arena, sia_u64 size) {
     SIA_MEMSET(out, 0, size);
     
     return (void*)out;
+}
+
+// Helper function to check if pointer is valid and belongs to arena
+// TODO: Implement this function to validate ptr is within arena bounds
+static sia_b32 _sia_is_valid_ptr(si_arena* arena, void* ptr, sia_u64 size) {
+    // TODO: Check if ptr is NULL
+    // TODO: For malloc backend: iterate through nodes and check if ptr is within any node
+    // TODO: For low-level backend: check if ptr is within arena memory range
+    // TODO: Check if ptr + size doesn't overflow
+    // TODO: Return SIA_TRUE if valid, SIA_FALSE otherwise
+    (void)arena;
+    (void)ptr;
+    (void)size;
+    return SIA_FALSE; // Placeholder
+}
+
+// Helper function to check if ptr is the last allocation (can grow in-place)
+// TODO: Implement this function to check if ptr is the most recent allocation
+static sia_b32 _sia_is_last_allocation(si_arena* arena, void* ptr, sia_u64 size) {
+    // TODO: For malloc backend: check if ptr is at the end of current node
+    // TODO: For low-level backend: check if ptr + size == arena->_pos (accounting for alignment)
+    // TODO: Return SIA_TRUE if it's the last allocation, SIA_FALSE otherwise
+    (void)arena;
+    (void)ptr;
+    (void)size;
+    return SIA_FALSE; // Placeholder
+}
+
+void* sia_realloc(si_arena* arena, void* ptr, sia_u64 old_size, sia_u64 new_size) {
+    if (arena == NULL) {
+        last_error.code = SIA_ERR_INVALID_PTR;
+        last_error.msg = "Arena is NULL";
+        // TODO: Call error callback if available - need to get callback from somewhere
+        return NULL;
+    }
+    
+    if (ptr == NULL) {
+        // If ptr is NULL, treat as new allocation
+        return sia_push(arena, new_size);
+    }
+    
+    if (new_size == 0) {
+        // If new_size is 0, treat as free (but we can't actually free in arena)
+        // TODO: Decide behavior - should we just return NULL or do nothing?
+        // For now, return NULL to match standard realloc behavior
+        return NULL;
+    }
+    
+    if (new_size <= old_size) {
+        // Shrinking - in arena, we can't actually shrink, just return same pointer
+        // TODO: Validate the pointer is still valid before returning
+        if (!_sia_is_valid_ptr(arena, ptr, old_size)) {
+            last_error.code = SIA_ERR_INVALID_PTR;
+            last_error.msg = "Invalid pointer for realloc";
+            arena->_last_error = last_error;
+            arena->error_callback(last_error);
+            return NULL;
+        }
+        return ptr;
+    }
+    
+    // Growing allocation
+    // TODO: Validate that ptr is a valid pointer from this arena
+    if (!_sia_is_valid_ptr(arena, ptr, old_size)) {
+        last_error.code = SIA_ERR_INVALID_PTR;
+        last_error.msg = "Invalid pointer for realloc";
+        arena->_last_error = last_error;
+        arena->error_callback(last_error);
+        return NULL;
+    }
+    
+    // TODO: Check if ptr is the last allocation (can grow in-place)
+    if (_sia_is_last_allocation(arena, ptr, old_size)) {
+        // Try to grow in-place
+        sia_u64 additional_size = new_size - old_size;
+        void* new_ptr = sia_push(arena, additional_size);
+        
+        if (new_ptr != NULL && new_ptr == (void*)((sia_u8*)ptr + old_size)) {
+            // Successfully grew in-place!
+            return ptr;
+        }
+        
+        // Failed to grow in-place, need to allocate new and copy
+        // Pop the failed attempt
+        sia_pop(arena, additional_size);
+    }
+    
+#ifdef SIA_FORCE_MALLOC
+    // Malloc backend implementation
+    // TODO: For malloc backend, check if we can grow within current node
+    // TODO: If ptr is in current node and there's space after, we can grow in-place
+    // TODO: Otherwise, allocate new memory, copy old data, return new pointer
+    
+    // For now, always allocate new and copy
+    void* new_ptr = sia_push(arena, new_size);
+    if (new_ptr == NULL) {
+        last_error.code = SIA_ERR_REALLOC_FAILED;
+        last_error.msg = "Failed to allocate new memory for realloc";
+        arena->_last_error = last_error;
+        arena->error_callback(last_error);
+        return NULL;
+    }
+    
+    // Copy old_size bytes from ptr to new_ptr
+    SIA_MEMCPY(new_ptr, ptr, old_size);
+    
+    return new_ptr;
+#else
+    // Low-level backend implementation
+    // TODO: Check if ptr is the last allocation (can grow in-place)
+    // TODO: Calculate if ptr + old_size aligns with current arena position
+    // TODO: If yes, check if there's enough space to grow in-place
+    // TODO: If enough space, update arena->_pos and return ptr
+    // TODO: If not, allocate new memory, copy old data, return new pointer
+    
+    // For now, always allocate new and copy
+    void* new_ptr = sia_push(arena, new_size);
+    if (new_ptr == NULL) {
+        last_error.code = SIA_ERR_REALLOC_FAILED;
+        last_error.msg = "Failed to allocate new memory for realloc";
+        arena->_last_error = last_error;
+        arena->error_callback(last_error);
+        return NULL;
+    }
+    
+    // Copy old_size bytes from ptr to new_ptr
+    SIA_MEMCPY(new_ptr, ptr, old_size);
+    
+    return new_ptr;
+#endif
 }
 
 void sia_pop_to(si_arena* arena, sia_u64 pos) {
