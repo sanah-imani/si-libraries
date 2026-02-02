@@ -1,26 +1,15 @@
-/*
-MGA Header
-===================================================
-  __  __  ___   _     _  _ ___   _   ___  ___ ___ 
- |  \/  |/ __| /_\   | || | __| /_\ |   \| __| _ \
- | |\/| | (_ |/ _ \  | __ | _| / _ \| |) | _||   /
- |_|  |_|\___/_/ \_\ |_||_|___/_/ \_\___/|___|_|_\
+#ifndef SI_ARENA_H
+#define SI_ARENA_H
 
-===================================================
-*/
-
-#ifndef MG_ARENA_H
-#define MG_ARENA_H
-
-#ifndef MGA_FUNC_DEF
-#   if defined(MGA_STATIC)
-#      define MGA_FUNC_DEF static
-#   elif defined(_WIN32) && defined(MGA_DLL) && defined(MG_ARENA_IMPL)
-#       define MGA_FUNC_DEF __declspec(dllexport)
-#   elif defined(_WIN32) && defined(MGA_DLL)
-#       define MGA_FUNC_DEF __declspec(dllimport)
+#ifndef SIA_FUNC_DEF
+#   if defined(SIA_STATIC)
+#      define SIA_FUNC_DEF static
+#   elif defined(_WIN32) && defined(SIA_DLL) && defined(SI_ARENA_IMPL)
+#       define SIA_FUNC_DEF __declspec(dllexport)
+#   elif defined(_WIN32) && defined(SIA_DLL)
+#       define SIA_FUNC_DEF __declspec(dllimport)
 #   else
-#      define MGA_FUNC_DEF extern
+#      define SIA_FUNC_DEF extern
 #   endif
 #endif
 
@@ -30,114 +19,114 @@ extern "C" {
 
 #include <stdint.h>
 
-typedef int32_t  mga_i32;
-typedef uint8_t  mga_u8;
-typedef uint32_t mga_u32;
-typedef uint64_t mga_u64;
+typedef int32_t  sia_i32;
+typedef uint8_t  sia_u8;
+typedef uint32_t sia_u32;
+typedef uint64_t sia_u64;
 
-typedef mga_i32 mga_b32;
+typedef sia_i32 sia_b32;
 
-#define MGA_KiB(x) (mga_u64)((mga_u64)(x) << 10)
-#define MGA_MiB(x) (mga_u64)((mga_u64)(x) << 20)
-#define MGA_GiB(x) (mga_u64)((mga_u64)(x) << 30) 
+#define SIA_KiB(x) (sia_u64)((sia_u64)(x) << 10)
+#define SIA_MiB(x) (sia_u64)((sia_u64)(x) << 20)
+#define SIA_GiB(x) (sia_u64)((sia_u64)(x) << 30) 
 
-typedef struct _mga_malloc_node {
-    struct _mga_malloc_node* prev;
-    mga_u64 size;
-    mga_u64 pos;
-    mga_u8* data;
-} _mga_malloc_node;
+typedef struct _sia_malloc_node {
+    struct _sia_malloc_node* prev;
+    sia_u64 size;
+    sia_u64 pos;
+    sia_u8* data;
+} _sia_malloc_node;
 
 typedef struct {
-    _mga_malloc_node* cur_node;
-} _mga_malloc_backend;
+    _sia_malloc_node* cur_node;
+} _sia_malloc_backend;
 typedef struct {
-    mga_u64 commit_pos;
-} _mga_reserve_backend;
+    sia_u64 commit_pos;
+} _sia_reserve_backend;
 
 typedef enum {
-    MGA_ERR_NONE = 0,
-    MGA_ERR_INIT_FAILED,
-    MGA_ERR_MALLOC_FAILED,
-    MGA_ERR_COMMIT_FAILED,
-    MGA_ERR_OUT_OF_MEMORY,
-    MGA_ERR_CANNOT_POP_MORE
-} mga_error_code;
+    SIA_ERR_NONE = 0,
+    SIA_ERR_INIT_FAILED,
+    SIA_ERR_MALLOC_FAILED,
+    SIA_ERR_COMMIT_FAILED,
+    SIA_ERR_OUT_OF_MEMORY,
+    SIA_ERR_CANNOT_POP_MORE
+} sia_error_code;
 
 typedef struct {
-    mga_error_code code;
+    sia_error_code code;
     char* msg;
-} mga_error;
+} sia_error;
 
-typedef void (mga_error_callback)(mga_error error);
+typedef void (sia_error_callback)(sia_error error);
 
 
 typedef struct {
-    mga_u64 _pos;
+    sia_u64 _pos;
 
-    mga_u64 _size;
-    mga_u64 _block_size;
-    mga_u32 _align;
+    sia_u64 _size;
+    sia_u64 _block_size;
+    sia_u32 _align;
 
     union {
-        _mga_malloc_backend _malloc_backend;
-        _mga_reserve_backend _reserve_backend;
+        _sia_malloc_backend _malloc_backend;
+        _sia_reserve_backend _reserve_backend;
     };
 
-    mga_error _last_error;
-    mga_error_callback* error_callback;
-} mg_arena;
+    sia_error _last_error;
+    sia_error_callback* error_callback;
+} si_arena;
 
 typedef struct {
-    mga_u64 desired_max_size;
-    mga_u32 desired_block_size;
-    mga_u32 align;
-    mga_error_callback* error_callback;
-} mga_desc;
+    sia_u64 desired_max_size;
+    sia_u32 desired_block_size;
+    sia_u32 align;
+    sia_error_callback* error_callback;
+} sia_desc;
 
-MGA_FUNC_DEF mg_arena* mga_create(const mga_desc* desc);
-MGA_FUNC_DEF void mga_destroy(mg_arena* arena);
+SIA_FUNC_DEF si_arena* sia_create(const sia_desc* desc);
+SIA_FUNC_DEF void sia_destroy(si_arena* arena);
 
-MGA_FUNC_DEF mga_error mga_get_error(mg_arena* arena);
+SIA_FUNC_DEF sia_error sia_get_error(si_arena* arena);
 
-MGA_FUNC_DEF mga_u64 mga_get_pos(mg_arena* arena);
-MGA_FUNC_DEF mga_u64 mga_get_size(mg_arena* arena);
-MGA_FUNC_DEF mga_u32 mga_get_block_size(mg_arena* arena);
-MGA_FUNC_DEF mga_u32 mga_get_align(mg_arena* arena);
+SIA_FUNC_DEF sia_u64 sia_get_pos(si_arena* arena);
+SIA_FUNC_DEF sia_u64 sia_get_size(si_arena* arena);
+SIA_FUNC_DEF sia_u32 sia_get_block_size(si_arena* arena);
+SIA_FUNC_DEF sia_u32 sia_get_align(si_arena* arena);
 
-MGA_FUNC_DEF void* mga_push(mg_arena* arena, mga_u64 size);
-MGA_FUNC_DEF void* mga_push_zero(mg_arena* arena, mga_u64 size);
+SIA_FUNC_DEF void* sia_push(si_arena* arena, sia_u64 size);
+SIA_FUNC_DEF void* sia_push_zero(si_arena* arena, sia_u64 size);
 
-MGA_FUNC_DEF void mga_pop(mg_arena* arena, mga_u64 size);
-MGA_FUNC_DEF void mga_pop_to(mg_arena* arena, mga_u64 pos);
+SIA_FUNC_DEF void sia_pop(si_arena* arena, sia_u64 size);
+SIA_FUNC_DEF void sia_pop_to(si_arena* arena, sia_u64 pos);
 
-MGA_FUNC_DEF void mga_reset(mg_arena* arena);
+SIA_FUNC_DEF void sia_reset(si_arena* arena);
 
-#define MGA_PUSH_STRUCT(arena, type) (type*)mga_push(arena, sizeof(type))
-#define MGA_PUSH_ZERO_STRUCT(arena, type) (type*)mga_push_zero(arena, sizeof(type))
-#define MGA_PUSH_ARRAY(arena, type, num) (type*)mga_push(arena, sizeof(type) * (num))
-#define MGA_PUSH_ZERO_ARRAY(arena, type, num) (type*)mga_push_zero(arena, sizeof(type) * (num))
+#define SIA_PUSH_STRUCT(arena, type) (type*)sia_push(arena, sizeof(type))
+#define SIA_PUSH_ZERO_STRUCT(arena, type) (type*)sia_push_zero(arena, sizeof(type))
+#define SIA_PUSH_ARRAY(arena, type, num) (type*)sia_push(arena, sizeof(type) * (num))
+#define SIA_PUSH_ZERO_ARRAY(arena, type, num) (type*)sia_push_zero(arena, sizeof(type) * (num))
 
 typedef struct {
-    mg_arena* arena;
-    mga_u64 _pos;
-} mga_temp;
+    si_arena* arena;
+    sia_u64 _pos;
+} sia_temp;
 
-MGA_FUNC_DEF mga_temp mga_temp_begin(mg_arena* arena);
-MGA_FUNC_DEF void mga_temp_end(mga_temp temp);
+SIA_FUNC_DEF sia_temp sia_temp_begin(si_arena* arena);
+SIA_FUNC_DEF void sia_temp_end(sia_temp temp);
 
-MGA_FUNC_DEF void mga_scratch_set_desc(const mga_desc* desc);
-MGA_FUNC_DEF mga_temp mga_scratch_get(mg_arena** conflicts, mga_u32 num_conflicts);
-MGA_FUNC_DEF void mga_scratch_release(mga_temp scratch);
+SIA_FUNC_DEF void sia_scratch_set_desc(const sia_desc* desc);
+SIA_FUNC_DEF sia_temp sia_scratch_get(si_arena** conflicts, sia_u32 num_conflicts);
+SIA_FUNC_DEF void sia_scratch_release(sia_temp scratch);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif // MG_ARENA_H
+#endif // SI_ARENA_H
 
 /*
-MGA Implementation
+SIA Implementation
 ===========================================================================================
   __  __  ___   _     ___ __  __ ___ _    ___ __  __ ___ _  _ _____ _ _____ ___ ___  _  _ 
  |  \/  |/ __| /_\   |_ _|  \/  | _ \ |  | __|  \/  | __| \| |_   _/_\_   _|_ _/ _ \| \| |
@@ -147,93 +136,93 @@ MGA Implementation
 ===========================================================================================
 */
 
-#ifdef MG_ARENA_IMPL
+#ifdef SI_ARENA_IMPL
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 #if defined(__linux__)
-#    define MGA_PLATFORM_LINUX
+#    define SIA_PLATFORM_LINUX
 #elif defined(__APPLE__)
-#    define MGA_PLATFORM_APPLE
+#    define SIA_PLATFORM_APPLE
 #elif defined(_WIN32)
-#    define MGA_PLATFORM_WIN32
+#    define SIA_PLATFORM_WIN32
 #elif defined(__EMSCRIPTEN__)
-#    define MGA_PLATFORM_EMSCRIPTEN
+#    define SIA_PLATFORM_EMSCRIPTEN
 #else
-#    warning "MGA: Unknown platform"
-#    define MGA_PLATFORM_UNKNOWN
+#    warning "SIA: Unknown platform"
+#    define SIA_PLATFORM_UNKNOWN
 #endif
 
-#if defined(MGA_MEM_RESERVE) && defined(MGA_MEM_COMMIT) && defined(MGA_MEM_DECOMMIT) && defined(MGA_MEM_RELEASE) && defined(MGA_MEM_PAGESIZE)
-#elif !defined(MGA_MEM_RESERVE) && !defined(MGA_MEM_COMMIT) && !defined(MGA_MEM_DECOMMIT) && !defined(MGA_MEM_RELEASE) && !defined(MGA_MEM_PAGESIZE)
+#if defined(SIA_MEM_RESERVE) && defined(SIA_MEM_COMMIT) && defined(SIA_MEM_DECOMMIT) && defined(SIA_MEM_RELEASE) && defined(SIA_MEM_PAGESIZE)
+#elif !defined(SIA_MEM_RESERVE) && !defined(SIA_MEM_COMMIT) && !defined(SIA_MEM_DECOMMIT) && !defined(SIA_MEM_RELEASE) && !defined(SIA_MEM_PAGESIZE)
 #else
-#    error "MG ARENA: Must define all or none of, MGA_MEM_RESERVE, MGA_MEM_COMMIT, MGA_MEM_DECOMMIT, MGA_MEM_RELEASE, and MGA_MEM_PAGESIZE"
+#    error "SI ARENA: Must define all or none of, SIA_MEM_RESERVE, SIA_MEM_COMMIT, SIA_MEM_DECOMMIT, SIA_MEM_RELEASE, and SIA_MEM_PAGESIZE"
 #endif
 
-#if !defined(MGA_MEM_RESERVE) && !defined(MGA_FORCE_MALLOC) && (defined(MGA_PLATFORM_LINUX) || defined(MGA_PLATFORM_WIN32))
-#    define MGA_MEM_RESERVE _mga_mem_reserve
-#    define MGA_MEM_COMMIT _mga_mem_commit
-#    define MGA_MEM_DECOMMIT _mga_mem_decommit
-#    define MGA_MEM_RELEASE _mga_mem_release
-#    define MGA_MEM_PAGESIZE _mga_mem_pagesize
+#if !defined(SIA_MEM_RESERVE) && !defined(SIA_FORCE_MALLOC) && (defined(SIA_PLATFORM_LINUX) || defined(SIA_PLATFORM_WIN32))
+#    define SIA_MEM_RESERVE _sia_mem_reserve
+#    define SIA_MEM_COMMIT _sia_mem_commit
+#    define SIA_MEM_DECOMMIT _sia_mem_decommit
+#    define SIA_MEM_RELEASE _sia_mem_release
+#    define SIA_MEM_PAGESIZE _sia_mem_pagesize
 #endif
 
 // This is needed for the size and block_size calculations
-#ifndef MGA_MEM_PAGESIZE
-#    define MGA_MEM_PAGESIZE _mga_mem_pagesize
+#ifndef SIA_MEM_PAGESIZE
+#    define SIA_MEM_PAGESIZE _sia_mem_pagesize
 #endif
 
-#if !defined(MGA_MEM_RESERVE) && !defined(MGA_FORCE_MALLOC)
-#   define MGA_FORCE_MALLOC
+#if !defined(SIA_MEM_RESERVE) && !defined(SIA_FORCE_MALLOC)
+#   define SIA_FORCE_MALLOC
 #endif
 
-#if defined(MGA_FORCE_MALLOC)
-#    if defined(MGA_MALLOC) && defined(MGA_FREE)
-#    elif !defined(MGA_MALLOC) && !defined(MGA_FREE)
+#if defined(SIA_FORCE_MALLOC)
+#    if defined(SIA_MALLOC) && defined(SIA_FREE)
+#    elif !defined(SIA_MALLOC) && !defined(SIA_FREE)
 #    else
-#        error "MGA ARENA: Must define both or none of MGA_MALLOC and MGA_FREE"
+#        error "SIA ARENA: Must define both or none of SIA_MALLOC and SIA_FREE"
 #    endif
-#    ifndef MGA_MALLOC
+#    ifndef SIA_MALLOC
 #        include <stdlib.h>
-#        define MGA_MALLOC malloc
-#        define MGA_FREE free
+#        define SIA_MALLOC malloc
+#        define SIA_FREE free
 #    endif
 #endif
 
-#ifndef MGA_MEMSET
+#ifndef SIA_MEMSET
 #   include <string.h>
-#   define MGA_MEMSET memset
+#   define SIA_MEMSET memset
 #endif
 
-#ifndef MGA_NO_STDIO
+#ifndef SIA_NO_STDIO
 #   include <stdio.h>
 #endif
 
-#define MGA_UNUSED(x) (void)(x)
+#define SIA_UNUSED(x) (void)(x)
 
-#define MGA_TRUE 1
-#define MGA_FALSE 0
+#define SIA_TRUE 1
+#define SIA_FALSE 0
 
-#ifndef MGA_THREAD_VAR
+#ifndef SIA_THREAD_VAR
 #    if defined(__clang__) || defined(__GNUC__)
-#        define MGA_THREAD_VAR __thread
+#        define SIA_THREAD_VAR __thread
 #    elif defined(_MSC_VER)
-#        define MGA_THREAD_VAR __declspec(thread)
+#        define SIA_THREAD_VAR __declspec(thread)
 #    elif (__STDC_VERSION__ >= 201112L)
-#        define MGA_THREAD_VAR _Thread_local
+#        define SIA_THREAD_VAR _Thread_local
 #    else
-#        error "MG ARENA: Invalid compiler/version for thead variable; Define MGA_THREAD_VAR, use Clang, GCC, or MSVC, or use C11 or greater"
+#        error "SI ARENA: Invalid compiler/version for thead variable; Define SIA_THREAD_VAR, use Clang, GCC, or MSVC, or use C11 or greater"
 #    endif
 #endif
 
-#define MGA_MIN(a, b) ((a) < (b) ? (a) : (b))
-#define MGA_MAX(a, b) ((a) > (b) ? (a) : (b))
+#define SIA_MIN(a, b) ((a) < (b) ? (a) : (b))
+#define SIA_MAX(a, b) ((a) > (b) ? (a) : (b))
 
-#define MGA_ALIGN_UP_POW2(x, b) (((mga_u64)(x) + ((mga_u64)(b) - 1)) & (~((mga_u64)(b) - 1)))
+#define SIA_ALIGN_UP_POW2(x, b) (((sia_u64)(x) + ((sia_u64)(b) - 1)) & (~((sia_u64)(b) - 1)))
 
-#ifdef MGA_PLATFORM_WIN32
+#ifdef SIA_PLATFORM_WIN32
 
 #ifndef UNICODE
     #define UNICODE
@@ -242,73 +231,73 @@ extern "C" {
 
 #include <Windows.h>
 
-#ifndef MGA_FORCE_MALLOC
-static void* _mga_mem_reserve(mga_u64 size) {
+#ifndef SIA_FORCE_MALLOC
+static void* _sia_mem_reserve(sia_u64 size) {
     void* out = VirtualAlloc(0, size, MEM_RESERVE, PAGE_READWRITE);
     return out;
 }
-static mga_b32 _mga_mem_commit(void* ptr, mga_u64 size) {
-    mga_b32 out = (VirtualAlloc(ptr, size, MEM_COMMIT, PAGE_READWRITE) != 0);
+static sia_b32 _sia_mem_commit(void* ptr, sia_u64 size) {
+    sia_b32 out = (VirtualAlloc(ptr, size, MEM_COMMIT, PAGE_READWRITE) != 0);
     return out;
 }
-static void _mga_mem_decommit(void* ptr, mga_u64 size) {
+static void _sia_mem_decommit(void* ptr, sia_u64 size) {
     VirtualFree(ptr, size, MEM_DECOMMIT);
 }
-static void _mga_mem_release(void* ptr, mga_u64 size) {
-    MGA_UNUSED(size);
+static void _sia_mem_release(void* ptr, sia_u64 size) {
+    SIA_UNUSED(size);
     VirtualFree(ptr, 0, MEM_RELEASE);
 }
 #endif
-static mga_u32 _mga_mem_pagesize() {
+static sia_u32 _sia_mem_pagesize() {
     SYSTEM_INFO si;
     GetSystemInfo(&si);
-    return (mga_u32)si.dwPageSize;
+    return (sia_u32)si.dwPageSize;
 }
 
-#endif // MGA_PLATFORM_WIN32
+#endif // SIA_PLATFORM_WIN32
 
-#if defined(MGA_PLATFORM_LINUX) || defined(MGA_PLATFORM_APPLE)
+#if defined(SIA_PLATFORM_LINUX) || defined(SIA_PLATFORM_APPLE)
 
 #include <sys/mman.h>
 #include <unistd.h>
 
-#ifndef MGA_FORCE_MALLOC
-static void* _mga_mem_reserve(mga_u64 size) {
+#ifndef SIA_FORCE_MALLOC
+static void* _sia_mem_reserve(sia_u64 size) {
     void* out = mmap(NULL, size, PROT_NONE, MAP_SHARED | MAP_ANONYMOUS, -1, (off_t)0);
     return out;
 }
-static mga_b32 _mga_mem_commit(void* ptr, mga_u64 size) {
-    mga_b32 out = (mprotect(ptr, size, PROT_READ | PROT_WRITE) == 0);
+static sia_b32 _sia_mem_commit(void* ptr, sia_u64 size) {
+    sia_b32 out = (mprotect(ptr, size, PROT_READ | PROT_WRITE) == 0);
     return out;
 }
-static void _mga_mem_decommit(void* ptr, mga_u64 size) {
+static void _sia_mem_decommit(void* ptr, sia_u64 size) {
     mprotect(ptr, size, PROT_NONE);
     madvise(ptr, size, MADV_DONTNEED);
 }
-static void _mga_mem_release(void* ptr, mga_u64 size) {
+static void _sia_mem_release(void* ptr, sia_u64 size) {
     munmap(ptr, size);
 }
 #endif
-static mga_u32 _mga_mem_pagesize() {
-    return (mga_u32)sysconf(_SC_PAGESIZE);
+static sia_u32 _sia_mem_pagesize() {
+    return (sia_u32)sysconf(_SC_PAGESIZE);
 }
 
-#endif // MGA_PLATFORM_LINUX || MGA_PLATFORM_APPLE
+#endif // SIA_PLATFORM_LINUX || SIA_PLATFORM_APPLE
 
-#ifdef MGA_PLATFORM_UNKNOWN
+#ifdef SIA_PLATFORM_UNKNOWN
 
-#ifndef MGA_FORCE_MALLOC
-static void* _mga_mem_reserve(mga_u64 size) { MGA_UNUSED(size); return NULL; }
-static void _mga_mem_commit(void* ptr, mga_u64 size) { MGA_UNUSED(ptr); MGA_UNUSED(size); }
-static void _mga_mem_decommit(void* ptr, mga_u64 size) { MGA_UNUSED(ptr); MGA_UNUSED(size); }
-static void _mga_mem_release(void* ptr, mga_u64 size) { MGA_UNUSED(ptr); MGA_UNUSED(size); }
+#ifndef SIA_FORCE_MALLOC
+static void* _sia_mem_reserve(sia_u64 size) { SIA_UNUSED(size); return NULL; }
+static void _sia_mem_commit(void* ptr, sia_u64 size) { SIA_UNUSED(ptr); SIA_UNUSED(size); }
+static void _sia_mem_decommit(void* ptr, sia_u64 size) { SIA_UNUSED(ptr); SIA_UNUSED(size); }
+static void _sia_mem_release(void* ptr, sia_u64 size) { SIA_UNUSED(ptr); SIA_UNUSED(size); }
 #endif
-static mga_u32 _mga_mem_pagesize(){ return 4096; }
+static sia_u32 _sia_mem_pagesize(){ return 4096; }
 
-#endif // MGA_PLATFORM_UNKNOWN
+#endif // SIA_PLATFORM_UNKNOWN
 
 // https://graphics.stanford.edu/~seander/bithacks.html#RoundUpPowerOf2
-static mga_u32 _mga_round_pow2(mga_u32 v) {
+static sia_u32 _sia_round_pow2(sia_u32 v) {
     v--;
     v |= v >> 1;
     v |= v >> 2;
@@ -322,30 +311,30 @@ static mga_u32 _mga_round_pow2(mga_u32 v) {
 
 
 typedef struct {
-    mga_error_callback* error_callback;
-    mga_u64 max_size;
-    mga_u32 block_size;
-    mga_u32 align;
-} _mga_init_data;
+    sia_error_callback* error_callback;
+    sia_u64 max_size;
+    sia_u32 block_size;
+    sia_u32 align;
+} _sia_init_data;
 
-static void _mga_empty_error_callback(mga_error error) {
-    MGA_UNUSED(error);
+static void _sia_empty_error_callback(sia_error error) {
+    SIA_UNUSED(error);
 }
 
-static _mga_init_data _mga_init_common(const mga_desc* desc) {
-    _mga_init_data out = { 0 };
+static _sia_init_data _sia_init_common(const sia_desc* desc) {
+    _sia_init_data out = { 0 };
     
     out.error_callback = desc->error_callback == NULL ?
-        _mga_empty_error_callback : desc->error_callback;
+        _sia_empty_error_callback : desc->error_callback;
 
-    mga_u32 page_size = MGA_MEM_PAGESIZE();
+    sia_u32 page_size = SIA_MEM_PAGESIZE();
     
-    out.max_size = MGA_ALIGN_UP_POW2(desc->desired_max_size, page_size);
-    mga_u32 desired_block_size = desc->desired_block_size == 0 ? 
-        MGA_ALIGN_UP_POW2(out.max_size / 8, page_size) : desc->desired_block_size;
-    desired_block_size = MGA_ALIGN_UP_POW2(desired_block_size, page_size);
+    out.max_size = SIA_ALIGN_UP_POW2(desc->desired_max_size, page_size);
+    sia_u32 desired_block_size = desc->desired_block_size == 0 ? 
+        SIA_ALIGN_UP_POW2(out.max_size / 8, page_size) : desc->desired_block_size;
+    desired_block_size = SIA_ALIGN_UP_POW2(desired_block_size, page_size);
     
-    out.block_size = _mga_round_pow2(desired_block_size);
+    out.block_size = _sia_round_pow2(desired_block_size);
     
     out.align = desc->align == 0 ? (sizeof(void*)) : desc->align;
     
@@ -354,9 +343,9 @@ static _mga_init_data _mga_init_common(const mga_desc* desc) {
 
 // This is an annoying placement, but
 // it has to be above the implementations that reference it
-static MGA_THREAD_VAR mga_error last_error;
+static SIA_THREAD_VAR sia_error last_error;
 
-#ifdef MGA_FORCE_MALLOC
+#ifdef SIA_FORCE_MALLOC
 
 /*
 Malloc Backend
@@ -369,13 +358,13 @@ Malloc Backend
 ======================================================================
 */
                                                                       
-mg_arena* mga_create(const mga_desc* desc) {
-    _mga_init_data init_data = _mga_init_common(desc);
+si_arena* sia_create(const sia_desc* desc) {
+    _sia_init_data init_data = _sia_init_common(desc);
 
-    mg_arena* out = (mg_arena*)malloc(sizeof(mg_arena));
+    si_arena* out = (si_arena*)malloc(sizeof(si_arena));
 
     if (out == NULL) {
-        last_error.code = MGA_ERR_INIT_FAILED;
+        last_error.code = SIA_ERR_INIT_FAILED;
         last_error.msg = "Failed to malloc initial memory for arena";
         init_data.error_callback(last_error);
         return NULL;
@@ -385,25 +374,25 @@ mg_arena* mga_create(const mga_desc* desc) {
     out->_size = init_data.max_size;
     out->_block_size = init_data.block_size;
     out->_align = init_data.align;
-    out->_last_error = (mga_error){ .code=MGA_ERR_NONE, .msg="" };
+    out->_last_error = (sia_error){ .code=SIA_ERR_NONE, .msg="" };
     out->error_callback = init_data.error_callback;
 
-    out->_malloc_backend.cur_node = (_mga_malloc_node*)malloc(sizeof(_mga_malloc_node));
-    *out->_malloc_backend.cur_node = (_mga_malloc_node){
+    out->_malloc_backend.cur_node = (_sia_malloc_node*)malloc(sizeof(_sia_malloc_node));
+    *out->_malloc_backend.cur_node = (_sia_malloc_node){
         .prev = NULL,
         .size = out->_block_size,
         .pos = 0,
-        .data = (mga_u8*)malloc(out->_block_size)
+        .data = (sia_u8*)malloc(out->_block_size)
     };
 
     return out;
 }
-void mga_destroy(mg_arena* arena) {
-    _mga_malloc_node* node = arena->_malloc_backend.cur_node;
+void sia_destroy(si_arena* arena) {
+    _sia_malloc_node* node = arena->_malloc_backend.cur_node;
     while (node != NULL) {
         free(node->data);
 
-        _mga_malloc_node* temp = node;
+        _sia_malloc_node* temp = node;
         node = node->prev;
         free(temp);
     }
@@ -411,35 +400,35 @@ void mga_destroy(mg_arena* arena) {
     free(arena);
 }
 
-void* mga_push(mg_arena* arena, mga_u64 size) {
+void* sia_push(si_arena* arena, sia_u64 size) {
     if (arena->_pos + size > arena->_size) {
-        last_error.code = MGA_ERR_OUT_OF_MEMORY;
+        last_error.code = SIA_ERR_OUT_OF_MEMORY;
         last_error.msg = "Arena ran out of memory";
         arena->_last_error = last_error;
         arena->error_callback(last_error);
         return NULL;
     }
 
-    _mga_malloc_node* node = arena->_malloc_backend.cur_node;
+    _sia_malloc_node* node = arena->_malloc_backend.cur_node;
 
-    mga_u64 pos_aligned = MGA_ALIGN_UP_POW2(node->pos, arena->_align);
-    mga_u32 diff = pos_aligned - node->pos;
+    sia_u64 pos_aligned = SIA_ALIGN_UP_POW2(node->pos, arena->_align);
+    sia_u32 diff = pos_aligned - node->pos;
     arena->_pos += diff + size;
 
     if (arena->_pos >= node->size) {
         
-        mga_u64 unclamped_node_size = MGA_ALIGN_UP_POW2(size, arena->_block_size);
-        mga_u64 max_node_size = arena->_size - arena->_pos;
-        mga_u64 node_size = MGA_MIN(unclamped_node_size, max_node_size);
+        sia_u64 unclamped_node_size = SIA_ALIGN_UP_POW2(size, arena->_block_size);
+        sia_u64 max_node_size = arena->_size - arena->_pos;
+        sia_u64 node_size = SIA_MIN(unclamped_node_size, max_node_size);
         
-        _mga_malloc_node* new_node = (_mga_malloc_node*)malloc(sizeof(_mga_malloc_node));
-        mga_u8* data = (mga_u8*)malloc(node_size);
+        _sia_malloc_node* new_node = (_sia_malloc_node*)malloc(sizeof(_sia_malloc_node));
+        sia_u8* data = (sia_u8*)malloc(node_size);
 
         if (new_node == NULL || data == NULL) {
             if (new_node != NULL) { free(new_node); }
             if (data != NULL) { free(data); }
             
-            last_error.code = MGA_ERR_MALLOC_FAILED;
+            last_error.code = SIA_ERR_MALLOC_FAILED;
             last_error.msg = "Failed to malloc new node";
             arena->_last_error = last_error;
             arena->error_callback(last_error);
@@ -456,27 +445,27 @@ void* mga_push(mg_arena* arena, mga_u64 size) {
         return (void*)(new_node->data);
     }
     
-    void* out = (void*)((mga_u8*)node->data + pos_aligned);
+    void* out = (void*)((sia_u8*)node->data + pos_aligned);
     node->pos = pos_aligned + size;
 
     return out;
 }
 
-void mga_pop(mg_arena* arena, mga_u64 size) {
+void sia_pop(si_arena* arena, sia_u64 size) {
     if (size > arena->_pos) {
-        last_error.code = MGA_ERR_CANNOT_POP_MORE;
+        last_error.code = SIA_ERR_CANNOT_POP_MORE;
         last_error.msg = "Attempted to pop too much memory";
         arena->_last_error = last_error;
         arena->error_callback(last_error);
     }
     
-    mga_u64 size_left = size;
-    _mga_malloc_node* node = arena->_malloc_backend.cur_node;
+    sia_u64 size_left = size;
+    _sia_malloc_node* node = arena->_malloc_backend.cur_node;
 
     while (size_left > node->pos) {
         size_left -= node->pos;
         
-        _mga_malloc_node* temp = node;
+        _sia_malloc_node* temp = node;
         node = node->prev;
 
         free(temp->data);
@@ -489,11 +478,11 @@ void mga_pop(mg_arena* arena, mga_u64 size) {
     arena->_pos -= size;
 }
 
-void mga_reset(mg_arena* arena) {
-    mga_pop_to(arena, 0);
+void sia_reset(si_arena* arena) {
+    sia_pop_to(arena, 0);
 }
 
-#else // MGA_FORCE_MALLOC
+#else // SIA_FORCE_MALLOC
 
 /*
 Low Level Backend
@@ -506,62 +495,62 @@ Low Level Backend
 ================================================================================
 */
 
-#define MGA_MIN_POS MGA_ALIGN_UP_POW2(sizeof(mg_arena), 64) 
+#define SIA_MIN_POS SIA_ALIGN_UP_POW2(sizeof(si_arena), 64) 
 
-mg_arena* mga_create(const mga_desc* desc) {
-    _mga_init_data init_data = _mga_init_common(desc);
+si_arena* sia_create(const sia_desc* desc) {
+    _sia_init_data init_data = _sia_init_common(desc);
     
-    mg_arena* out = MGA_MEM_RESERVE(init_data.max_size);
+    si_arena* out = SIA_MEM_RESERVE(init_data.max_size);
 
     if (out == NULL) {
-        last_error.code = MGA_ERR_INIT_FAILED;
+        last_error.code = SIA_ERR_INIT_FAILED;
         last_error.msg = "Failed to reserve initial memory for arena";
         init_data.error_callback(last_error);
         return NULL;
     }
 
-    if (!MGA_MEM_COMMIT(out, init_data.block_size)) {
-        last_error.code = MGA_ERR_INIT_FAILED;
+    if (!SIA_MEM_COMMIT(out, init_data.block_size)) {
+        last_error.code = SIA_ERR_INIT_FAILED;
         last_error.msg = "Failed to commit initial memory for arena";
         init_data.error_callback(last_error);
         return NULL;
     }
 
-    out->_pos = MGA_MIN_POS;
+    out->_pos = SIA_MIN_POS;
     out->_size = init_data.max_size;
     out->_block_size = init_data.block_size;
     out->_align = init_data.align;
     out->_reserve_backend.commit_pos = init_data.block_size;
-    out->_last_error = (mga_error){ .code=MGA_ERR_NONE, .msg="" };
+    out->_last_error = (sia_error){ .code=SIA_ERR_NONE, .msg="" };
     out->error_callback = init_data.error_callback;
 
     return out;
 }
-void mga_destroy(mg_arena* arena) {
-    MGA_MEM_RELEASE(arena, arena->_size);
+void sia_destroy(si_arena* arena) {
+    SIA_MEM_RELEASE(arena, arena->_size);
 }
 
-void* mga_push(mg_arena* arena, mga_u64 size) {
+void* sia_push(si_arena* arena, sia_u64 size) {
     if (arena->_pos + size > arena->_size) {
-        last_error.code = MGA_ERR_OUT_OF_MEMORY;
+        last_error.code = SIA_ERR_OUT_OF_MEMORY;
         last_error.msg = "Arena ran out of memory";
         arena->_last_error = last_error;
         arena->error_callback(last_error);
         return NULL;
     }
 
-    mga_u64 pos_aligned = MGA_ALIGN_UP_POW2(arena->_pos, arena->_align);
-    void* out = (void*)((mga_u8*)arena + pos_aligned);
+    sia_u64 pos_aligned = SIA_ALIGN_UP_POW2(arena->_pos, arena->_align);
+    void* out = (void*)((sia_u8*)arena + pos_aligned);
     arena->_pos = pos_aligned + size;
 
-    mga_u64 commit_pos = arena->_reserve_backend.commit_pos;
+    sia_u64 commit_pos = arena->_reserve_backend.commit_pos;
     if (arena->_pos > commit_pos) {
-        mga_u64 commit_unclamped = MGA_ALIGN_UP_POW2(arena->_pos, arena->_block_size);
-        mga_u64 new_commit_pos = MGA_MIN(commit_unclamped, arena->_size);
-        mga_u64 commit_size = new_commit_pos - commit_pos;
+        sia_u64 commit_unclamped = SIA_ALIGN_UP_POW2(arena->_pos, arena->_block_size);
+        sia_u64 new_commit_pos = SIA_MIN(commit_unclamped, arena->_size);
+        sia_u64 commit_size = new_commit_pos - commit_pos;
         
-        if (!MGA_MEM_COMMIT((void*)((mga_u8*)arena + commit_pos), commit_size)) {
-            last_error.code = MGA_ERR_COMMIT_FAILED;
+        if (!SIA_MEM_COMMIT((void*)((sia_u8*)arena + commit_pos), commit_size)) {
+            last_error.code = SIA_ERR_COMMIT_FAILED;
             last_error.msg = "Failed to commit memory";
             arena->_last_error = last_error;
             arena->error_callback(last_error);
@@ -574,9 +563,9 @@ void* mga_push(mg_arena* arena, mga_u64 size) {
     return out;
 }
 
-void mga_pop(mg_arena* arena, mga_u64 size) {
-    if (size > arena->_pos - MGA_MIN_POS) {
-        last_error.code = MGA_ERR_CANNOT_POP_MORE;
+void sia_pop(si_arena* arena, sia_u64 size) {
+    if (size > arena->_pos - SIA_MIN_POS) {
+        last_error.code = SIA_ERR_CANNOT_POP_MORE;
         last_error.msg = "Attempted to pop too much memory";
         arena->_last_error = last_error;
         arena->error_callback(last_error);
@@ -584,23 +573,23 @@ void mga_pop(mg_arena* arena, mga_u64 size) {
         return;
     }
 
-    arena->_pos = MGA_MAX(MGA_MIN_POS, arena->_pos - size);
+    arena->_pos = SIA_MAX(SIA_MIN_POS, arena->_pos - size);
 
-    mga_u64 new_commit = MGA_MIN(arena->_size, MGA_ALIGN_UP_POW2(arena->_pos, arena->_block_size));
-    mga_u64 commit_pos = arena->_reserve_backend.commit_pos;
+    sia_u64 new_commit = SIA_MIN(arena->_size, SIA_ALIGN_UP_POW2(arena->_pos, arena->_block_size));
+    sia_u64 commit_pos = arena->_reserve_backend.commit_pos;
 
     if (new_commit < commit_pos) {
-        mga_u64 decommit_size = commit_pos - new_commit;
-        MGA_MEM_DECOMMIT((void*)((mga_u8*)arena + new_commit), decommit_size);
+        sia_u64 decommit_size = commit_pos - new_commit;
+        SIA_MEM_DECOMMIT((void*)((sia_u8*)arena + new_commit), decommit_size);
         arena->_reserve_backend.commit_pos = new_commit;
     }
 }
 
-void mga_reset(mg_arena* arena) {
-    mga_pop_to(arena, MGA_MIN_POS);
+void sia_reset(si_arena* arena) {
+    sia_pop_to(arena, SIA_MIN_POS);
 }
 
-#endif // NOT MGA_FORCE_MALLOC
+#endif // NOT SIA_FORCE_MALLOC
 
 /*
 All Backends
@@ -614,63 +603,63 @@ All Backends
 */
 
 
-mga_error mga_get_error(mg_arena* arena) {
-    mga_error* err = arena == NULL ? &last_error : &arena->_last_error;
-    mga_error temp = *err;
+sia_error sia_get_error(si_arena* arena) {
+    sia_error* err = arena == NULL ? &last_error : &arena->_last_error;
+    sia_error temp = *err;
 
-    *err = (mga_error){ MGA_ERR_NONE, "" };
+    *err = (sia_error){ SIA_ERR_NONE, "" };
     
     return temp;
 }
 
-mga_u64 mga_get_pos(mg_arena* arena) { return arena->_pos; }
-mga_u64 mga_get_size(mg_arena* arena) { return arena->_size; }
-mga_u32 mga_get_block_size(mg_arena* arena) { return arena->_block_size; }
-mga_u32 mga_get_align(mg_arena* arena) { return arena->_align; }
+sia_u64 sia_get_pos(si_arena* arena) { return arena->_pos; }
+sia_u64 sia_get_size(si_arena* arena) { return arena->_size; }
+sia_u32 sia_get_block_size(si_arena* arena) { return arena->_block_size; }
+sia_u32 sia_get_align(si_arena* arena) { return arena->_align; }
 
-void* mga_push_zero(mg_arena* arena, mga_u64 size) {
-    mga_u8* out = mga_push(arena, size);
-    MGA_MEMSET(out, 0, size);
+void* sia_push_zero(si_arena* arena, sia_u64 size) {
+    sia_u8* out = sia_push(arena, size);
+    SIA_MEMSET(out, 0, size);
     
     return (void*)out;
 }
 
-void mga_pop_to(mg_arena* arena, mga_u64 pos) {
-    mga_pop(arena, arena->_pos - pos);
+void sia_pop_to(si_arena* arena, sia_u64 pos) {
+    sia_pop(arena, arena->_pos - pos);
 }
 
-mga_temp mga_temp_begin(mg_arena* arena) {
-    return (mga_temp){
+sia_temp sia_temp_begin(si_arena* arena) {
+    return (sia_temp){
         .arena = arena,
         ._pos = arena->_pos
     };
 }
-void mga_temp_end(mga_temp temp) {
-    mga_pop_to(temp.arena, temp._pos);
+void sia_temp_end(sia_temp temp) {
+    sia_pop_to(temp.arena, temp._pos);
 }
 
-#ifndef MGA_SCRATCH_COUNT
-#   define MGA_SCRATCH_COUNT 2
+#ifndef SIA_SCRATCH_COUNT
+#   define SIA_SCRATCH_COUNT 2
 #endif
 
-#ifndef MGA_NO_STDIO
-static void _mga_scratch_on_error(mga_error err) {
-    fprintf(stderr, "MGA Scratch Error %u: %s\n", err.code, err.msg);
+#ifndef SIA_NO_STDIO
+static void _sia_scratch_on_error(sia_error err) {
+    fprintf(stderr, "SIA Scratch Error %u: %s\n", err.code, err.msg);
 }
 #endif
 
-static MGA_THREAD_VAR mga_desc _mga_scratch_desc = {
-    .desired_max_size = MGA_MiB(64),
-    .desired_block_size = MGA_KiB(256),
-#ifndef MGA_NO_STDIO
-    .error_callback = _mga_scratch_on_error,
+static SIA_THREAD_VAR sia_desc _sia_scratch_desc = {
+    .desired_max_size = SIA_MiB(64),
+    .desired_block_size = SIA_KiB(256),
+#ifndef SIA_NO_STDIO
+    .error_callback = _sia_scratch_on_error,
 #endif
 };
-static MGA_THREAD_VAR mg_arena* _mga_scratch_arenas[MGA_SCRATCH_COUNT] = { 0 };
+static SIA_THREAD_VAR si_arena* _sia_scratch_arenas[SIA_SCRATCH_COUNT] = { 0 };
 
-void mga_scratch_set_desc(const mga_desc* desc) {
-    if (_mga_scratch_arenas[0] == NULL) {
-        _mga_scratch_desc = (mga_desc){
+void sia_scratch_set_desc(const sia_desc* desc) {
+    if (_sia_scratch_arenas[0] == NULL) {
+        _sia_scratch_desc = (sia_desc){
             .desired_max_size = desc->desired_max_size,
             .desired_block_size = desc->desired_block_size,
             .align = desc->align,
@@ -678,41 +667,41 @@ void mga_scratch_set_desc(const mga_desc* desc) {
         };
     }
 }
-mga_temp mga_scratch_get(mg_arena** conflicts, mga_u32 num_conflicts) {
-    if (_mga_scratch_arenas[0] == NULL) {
-        for (mga_u32 i = 0; i < MGA_SCRATCH_COUNT; i++) {
-            _mga_scratch_arenas[i] = mga_create(&_mga_scratch_desc);
+sia_temp sia_scratch_get(si_arena** conflicts, sia_u32 num_conflicts) {
+    if (_sia_scratch_arenas[0] == NULL) {
+        for (sia_u32 i = 0; i < SIA_SCRATCH_COUNT; i++) {
+            _sia_scratch_arenas[i] = sia_create(&_sia_scratch_desc);
         }
     }
 
-    mga_temp out = { 0 };
+    sia_temp out = { 0 };
 
-    for (mga_u32 i = 0; i < MGA_SCRATCH_COUNT; i++) {
-        mg_arena* arena = _mga_scratch_arenas[i];
+    for (sia_u32 i = 0; i < SIA_SCRATCH_COUNT; i++) {
+        si_arena* arena = _sia_scratch_arenas[i];
 
-        mga_b32 in_conflict = MGA_FALSE;
-        for (mga_u32 j = 0; j < num_conflicts; j++) {
+        sia_b32 in_conflict = SIA_FALSE;
+        for (sia_u32 j = 0; j < num_conflicts; j++) {
             if (arena == conflicts[j]) {
-                in_conflict = MGA_TRUE;
+                in_conflict = SIA_TRUE;
                 break;
             }
         }
         if (in_conflict) { continue; }
 
-        out = mga_temp_begin(arena);
+        out = sia_temp_begin(arena);
     }
 
     return out;
 }
-void mga_scratch_release(mga_temp scratch) {
-    mga_temp_end(scratch);
+void sia_scratch_release(sia_temp scratch) {
+    sia_temp_end(scratch);
 }
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif // MG_ARENA_IMPL
+#endif // SI_ARENA_IMPL
 
 /*
 License
