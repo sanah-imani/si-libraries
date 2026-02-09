@@ -325,9 +325,17 @@ typedef struct {
     sia_u32 align;
 } _sia_init_data;
 
+
 static void _sia_empty_error_callback(sia_error error) {
     SIA_UNUSED(error);
 }
+
+#ifndef SIA_NO_STDIO
+static void _sia_stderr_error_callback(sia_error error) {
+    fprintf(stderr, "SIA Error %d: %s\n", error.code, error.msg);
+}
+#endif
+
 
 static _sia_init_data _sia_init_common(const sia_desc* desc) {
     _sia_init_data out = { 0 };
@@ -348,6 +356,9 @@ static _sia_init_data _sia_init_common(const sia_desc* desc) {
     
     return out;
 }
+
+
+static SIA_THREAD_VAR sia_error_callback* _sia_global_error_callback = NULL;
 
 // This is an annoying placement, but
 // it has to be above the implementations that reference it
@@ -625,6 +636,15 @@ sia_u64 sia_get_size(si_arena* arena) { return arena->_size; }
 sia_u32 sia_get_block_size(si_arena* arena) { return arena->_block_size; }
 sia_u32 sia_get_align(si_arena* arena) { return arena->_align; }
 
+
+void sia_set_global_error_callback(sia_error_callback* callback) {
+    _sia_global_error_callback = callback;
+}
+
+sia_error_callback* sia_get_global_error_callback(void) {
+    return _sia_global_error_callback;
+}
+
 void* sia_push_zero(si_arena* arena, sia_u64 size) {
     sia_u8* out = sia_push(arena, size);
     SIA_MEMSET(out, 0, size);
@@ -662,7 +682,15 @@ void* sia_realloc(si_arena* arena, void* ptr, sia_u64 old_size, sia_u64 new_size
     if (arena == NULL) {
         last_error.code = SIA_ERR_INVALID_PTR;
         last_error.msg = "Arena is NULL";
-        // TODO: Call error callback if available - need to get callback from somewhere
+       // Call global callback if available
+        if (_sia_global_error_callback != NULL) {
+            _sia_global_error_callback(last_error);
+        }
+        #ifndef SIA_NO_STDIO
+        else {
+            _sia_stderr_error_callback(last_error);
+        }
+        #endif
         return NULL;
     }
     
@@ -673,8 +701,10 @@ void* sia_realloc(si_arena* arena, void* ptr, sia_u64 old_size, sia_u64 new_size
     
     if (new_size == 0) {
         // If new_size is 0, treat as free (but we can't actually free in arena)
-        // TODO: Decide behavior - should we just return NULL or do nothing?
-        // For now, return NULL to match standard realloc behavior
+        last_error.code = SIA_ERR_INVALID_SIZE;
+        last_error.msg = "New size is 0";
+        arena->_last_error = last_error;
+        arena->error_callback(last_error);
         return NULL;
     }
     
