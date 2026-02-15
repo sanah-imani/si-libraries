@@ -54,6 +54,8 @@ typedef enum {
     SIA_ERR_REALLOC_FAILED,
     SIA_ERR_INVALID_PTR,
     SIA_ERR_MERGE_FAILED,
+    SIA_ERR_POOL_FULL,
+    SIA_ERR_INVALID_POOL_PTR
 } sia_error_code;
 
 typedef struct {
@@ -1080,6 +1082,79 @@ void* sia_realloc(si_arena* arena, void* ptr, sia_u64 old_size, sia_u64 new_size
     
     return new_ptr;
 #endif
+}
+
+sia_pool* sia_pool_create(const sia_pool_desc* desc) {
+    if (desc == NULL) {
+        last_error.code = SIA_ERR_INVALID_PTR;
+        last_error.msg = "Pool description is NULL";
+        if (_sia_global_error_callback != NULL) {
+            _sia_global_error_callback(last_error);
+        }
+#ifndef SIA_NO_STDIO
+        else {
+            _sia_stderr_error_callback(last_error);
+        }
+#endif
+        return NULL;
+    }
+    if (desc->arena == NULL){
+        last_error.code= SIA_ERR_INVALID_PTR;
+        last_error.msg = "Arena is NULL";
+        if (_sia_global_error_callback != NULL) {
+            _sia_global_error_callback(last_error);
+        }
+#ifndef SIA_NO_STDIO
+        else {
+            _sia_stderr_error_callback(last_error);
+        }
+#endif
+        return NULL;
+    }
+    
+    sia_u64 block_size = desc->block_size;
+    if (block_size <sizeof(void*)){
+        block_size = sizeof(void*);
+    }
+    // Calculate alignment (default to block_size or pointer size)
+    sia_u32 align = desc->align;
+    if (align == 0) {
+        align = (sia_u32)block_size;
+    }
+    if (align < sizeof(void*)) {
+        align = sizeof(void*);
+    }
+
+    sia_pool* pool = (sia_pool*) SIA_PUSH_ZERO_STRUCT(desc->arena, sia_pool);
+    if (pool == NULL){
+        return NULL;
+    }
+    pool->arena = desc->arena;
+    pool->block_size = block_size;
+    pool->align = align;
+    pool->free_list = NULL;
+    pool->total_blocks = 0;
+    pool->free_blocks = 0;
+    pool->block_memory = NULL;
+
+    if (desc->initial_capacity>0){
+        sia_b32 grow_success = sia_pool_grow(pool, desc->initial_capacity);
+        if (!grow_success){
+            last_error.code = SIA_ERR_POOL_FULL;
+            last_error.msg = "Failed to allocate initial capacity for pool";
+            if (_sia_global_error_callback != NULL) {
+                _sia_global_error_callback(last_error);
+            }
+#ifndef SIA_NO_STDIO
+            else {
+                _sia_stderr_error_callback(last_error);
+            }
+    }
+#endif
+        return NULL;
+    }
+
+    return pool;
 }
 
 void sia_pop_to(si_arena* arena, sia_u64 pos) {
