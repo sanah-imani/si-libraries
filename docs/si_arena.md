@@ -26,6 +26,7 @@ First off, if you are not already familiar with memory arenas, I recommend readi
 - [Error Handling](#error-handling)
 - [Platforms](#platforms)
 - [Profiling](#profiling)
+- [Memory Pools](#memory-pools)
 
 Backends
 --------
@@ -565,8 +566,68 @@ typedef struct {
 } sia_profile_stats;
 ```
 
+Memory Pools
+------------
+*(Planned Feature)*
+
+Fixed-size block allocators built on top of arenas. Pools allow random-order allocation and deallocation of same-sized blocks with automatic reuse.
+
+### Pool Functions
+
+- `sia_pool* sia_pool_create(const sia_pool_desc* desc)` <br>
+    - Creates a new memory pool with fixed-size blocks.
+    - Returns NULL on failure.
+
+- `void sia_pool_destroy(sia_pool* pool)` <br>
+    - Destroys a memory pool. Backing arena is not destroyed.
+
+- `void* sia_pool_alloc(sia_pool* pool)` <br>
+    - Allocates one block from the pool. Returns NULL on failure.
+
+- `void* sia_pool_alloc_zero(sia_pool* pool)` <br>
+    - Allocates one zeroed block from the pool. Returns NULL on failure.
+
+- `void sia_pool_free(sia_pool* pool, void* ptr)` <br>
+    - Returns a block to the pool for reuse. Pointer must be from this pool.
+
+- `sia_b32 sia_pool_grow(sia_pool* pool, sia_u64 num_blocks)` <br>
+    - Grows pool capacity by allocating additional blocks. Returns SIA_TRUE on success.
+
+- `sia_u64 sia_pool_get_block_size(sia_pool* pool)` <br>
+    - Returns the fixed block size.
+
+- `sia_u64 sia_pool_get_capacity(sia_pool* pool)` <br>
+    - Returns total number of blocks the pool can hold.
+
+- `sia_u64 sia_pool_get_used(sia_pool* pool)` <br>
+    - Returns number of currently allocated blocks.
+
+- `sia_u64 sia_pool_get_free(sia_pool* pool)` <br>
+    - Returns number of blocks in the free list.
+
+### Pool Structs
+
+- `sia_pool` - A memory pool (internal structure)
+
+- `sia_pool_desc` - Pool initialization parameters
+    - `si_arena*` *arena* - Backing arena for the pool
+    - `sia_u64` *block_size* - Fixed size of each block (must be >= sizeof(void*))
+    - `sia_u32` *align* - Block alignment (must be power of 2, defaults to block_size)
+    - `sia_u64` *initial_capacity* - Initial number of blocks to allocate
+
+### Pool Macros
+
+- `SIA_POOL_ALLOC_STRUCT(pool, type)` - Allocates one block cast to `type*`
+- `SIA_POOL_ALLOC_ZERO_STRUCT(pool, type)` - Allocates one zeroed block cast to `type*`
+
+### Pool Error Codes
+
+- `SIA_ERR_POOL_FULL` - Pool has no free blocks and cannot grow
+- `SIA_ERR_INVALID_POOL_PTR` - Attempted to free invalid pointer
+
 ### TODO
 - Article about implementation
 - Implement realloc feature
 - Implement arena merge feature
 - Implement profiling feature
+- Implement memory pools feature
