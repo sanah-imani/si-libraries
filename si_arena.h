@@ -52,7 +52,8 @@ typedef enum {
     SIA_ERR_OUT_OF_MEMORY,
     SIA_ERR_CANNOT_POP_MORE,
     SIA_ERR_REALLOC_FAILED,
-    SIA_ERR_INVALID_PTR
+    SIA_ERR_INVALID_PTR,
+    SIA_ERR_MERGE_FAILED,
 } sia_error_code;
 
 typedef struct {
@@ -121,6 +122,8 @@ SIA_FUNC_DEF void sia_temp_end(sia_temp temp);
 SIA_FUNC_DEF void sia_scratch_set_desc(const sia_desc* desc);
 SIA_FUNC_DEF sia_temp sia_scratch_get(si_arena** conflicts, sia_u32 num_conflicts);
 SIA_FUNC_DEF void sia_scratch_release(sia_temp scratch);
+
+SIA_FUNC_DEF si_arena*  sia_merge(si_arena** arenas, sia_u32 num_arenas);
 
 #ifdef __cplusplus
 }
@@ -652,30 +655,58 @@ void* sia_push_zero(si_arena* arena, sia_u64 size) {
     return (void*)out;
 }
 
-// Helper function to check if pointer is valid and belongs to arena
-// TODO: Implement this function to validate ptr is within arena bounds
 static sia_b32 _sia_is_valid_ptr(si_arena* arena, void* ptr, sia_u64 size) {
-    // TODO: Check if ptr is NULL
-    // TODO: For malloc backend: iterate through nodes and check if ptr is within any node
-    // TODO: For low-level backend: check if ptr is within arena memory range
-    // TODO: Check if ptr + size doesn't overflow
-    // TODO: Return SIA_TRUE if valid, SIA_FALSE otherwise
-    (void)arena;
-    (void)ptr;
-    (void)size;
-    return SIA_FALSE; // Placeholder
+    if (ptr == NULL) return SIA_FALSE;
+    
+#ifdef SIA_FORCE_MALLOC
+    _sia_malloc_node* node = arena->_malloc_backend.cur_node;
+    while (node != NULL) {
+        sia_u8* node_start = node->data;
+        sia_u8* node_end = node_start + node->size;
+        sia_u8* ptr_u8 = (sia_u8*)ptr;
+        if (ptr_u8 >= node_start && ptr_u8 + size <= node_end) {
+            return SIA_TRUE;
+        }
+        node = node->prev;
+    }
+    return SIA_FALSE;
+#else
+    sia_u8* arena_start = (sia_u8*)arena;
+    sia_u8* ptr_u8 = (sia_u8*)ptr;
+    sia_u8* min_pos = arena_start + SIA_MIN_POS;
+    return (ptr_u8 >= min_pos && ptr_u8 + size <= arena_start + arena->_pos);
+#endif
 }
 
-// Helper function to check if ptr is the last allocation (can grow in-place)
-// TODO: Implement this function to check if ptr is the most recent allocation
 static sia_b32 _sia_is_last_allocation(si_arena* arena, void* ptr, sia_u64 size) {
-    // TODO: For malloc backend: check if ptr is at the end of current node
-    // TODO: For low-level backend: check if ptr + size == arena->_pos (accounting for alignment)
-    // TODO: Return SIA_TRUE if it's the last allocation, SIA_FALSE otherwise
-    (void)arena;
-    (void)ptr;
-    (void)size;
-    return SIA_FALSE; // Placeholder
+#ifdef SIA_FORCE_MALLOC
+    _sia_malloc_node* node = arena->_malloc_backend.cur_node;
+    sia_u8* node_start = node->data;
+    sia_u8* ptr_u8 = (sia_u8*)ptr;
+    
+    if (ptr_u8 < node_start || ptr_u8 >= node_start + node->size) {
+        return SIA_FALSE;
+    }
+    
+    sia_u64 ptr_offset = ptr_u8 - node_start;
+    sia_u64 aligned_offset = SIA_ALIGN_UP_POW2(ptr_offset, arena->_align);
+    sia_u64 allocation_end = aligned_offset + size;
+    
+    return (allocation_end == node->pos);
+#else
+    sia_u8* arena_start = (sia_u8*)arena;
+    sia_u8* ptr_u8 = (sia_u8*)ptr;
+    
+    if (ptr_u8 < arena_start + SIA_MIN_POS || ptr_u8 >= arena_start + arena->_pos) {
+        return SIA_FALSE;
+    }
+    
+    sia_u64 ptr_offset = ptr_u8 - arena_start;
+    sia_u64 aligned_offset = SIA_ALIGN_UP_POW2(ptr_offset, arena->_align);
+    sia_u64 allocation_end = aligned_offset + size;
+    
+    return (allocation_end == arena->_pos);
+#endif
 }
 
 void* sia_realloc(si_arena* arena, void* ptr, sia_u64 old_size, sia_u64 new_size) {
