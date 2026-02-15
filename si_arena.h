@@ -125,6 +125,78 @@ SIA_FUNC_DEF void sia_scratch_release(sia_temp scratch);
 
 SIA_FUNC_DEF si_arena*  sia_merge(si_arena** arenas, sia_u32 num_arenas);
 
+
+typedef struct _sia_pool_block{
+    struct _sia_pool_block* next;
+} _sia_pool_block;
+
+typedef struct{
+    si_arena* arena;
+    sia_u64 block_size;
+    sia_u32 align;
+
+    _sia_pool_block* free_list;
+    sia_u64 total_blocks;
+    sia_u64 free_blocks;
+    void* block_memory;
+} _sia_pool;
+
+typedef struct {
+    si_arena* arena;
+    sia_u64 block_size;
+    sia_u32 align;
+    sia_u64 initial_capacity;
+} sia_pool_desc;
+
+// Memory Pool functions
+SIA_FUNC_DEF sia_pool* sia_pool_create(const sia_pool_desc* desc);
+SIA_FUNC_DEF void sia_pool_destroy(sia_pool* pool);
+SIA_FUNC_DEF void* sia_pool_alloc(sia_pool* pool);
+SIA_FUNC_DEF void* sia_pool_alloc_zero(sia_pool* pool);
+SIA_FUNC_DEF void sia_pool_free(sia_pool* pool, void* ptr);
+SIA_FUNC_DEF sia_b32 sia_pool_grow(sia_pool* pool, sia_u64 num_blocks);
+SIA_FUNC_DEF sia_u64 sia_pool_get_block_size(sia_pool* pool);
+SIA_FUNC_DEF sia_u64 sia_pool_get_capacity(sia_pool* pool);
+SIA_FUNC_DEF sia_u64 sia_pool_get_used(sia_pool* pool);
+SIA_FUNC_DEF sia_u64 sia_pool_get_free(sia_pool* pool);
+
+// Memory Pool structures
+typedef struct _sia_pool_block {
+    struct _sia_pool_block* next;
+} _sia_pool_block;
+
+typedef struct {
+    si_arena* arena;
+    sia_u64 block_size;
+    sia_u32 align;
+    _sia_pool_block* free_list;
+    sia_u64 total_blocks;
+    sia_u64 free_blocks;
+    void* block_memory;
+} sia_pool;
+
+typedef struct {
+    si_arena* arena;
+    sia_u64 block_size;
+    sia_u32 align;
+    sia_u64 initial_capacity;
+} sia_pool_desc;
+
+// Memory Pool functions
+SIA_FUNC_DEF sia_pool* sia_pool_create(const sia_pool_desc* desc);
+SIA_FUNC_DEF void sia_pool_destroy(sia_pool* pool);
+SIA_FUNC_DEF void* sia_pool_alloc(sia_pool* pool);
+SIA_FUNC_DEF void* sia_pool_alloc_zero(sia_pool* pool);
+SIA_FUNC_DEF void sia_pool_free(sia_pool* pool, void* ptr);
+SIA_FUNC_DEF sia_b32 sia_pool_grow(sia_pool* pool, sia_u64 num_blocks);
+SIA_FUNC_DEF sia_u64 sia_pool_get_block_size(sia_pool* pool);
+SIA_FUNC_DEF sia_u64 sia_pool_get_capacity(sia_pool* pool);
+SIA_FUNC_DEF sia_u64 sia_pool_get_used(sia_pool* pool);
+SIA_FUNC_DEF sia_u64 sia_pool_get_free(sia_pool* pool);
+
+#define SIA_POOL_ALLOC_STRUCT(pool, type) (type*)sia_pool_alloc(pool)
+#define SIA_POOL_ALLOC_ZERO_STRUCT(pool, type) (type*)sia_pool_alloc_zero(pool)
+
 #ifdef __cplusplus
 }
 #endif
