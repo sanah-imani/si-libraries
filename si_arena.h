@@ -731,49 +731,90 @@ void* sia_realloc(si_arena* arena, void* ptr, sia_u64 old_size, sia_u64 new_size
         return NULL;
     }
     
-    // TODO: Check if ptr is the last allocation (can grow in-place)
     if (_sia_is_last_allocation(arena, ptr, old_size)) {
         // Try to grow in-place
         sia_u64 additional_size = new_size - old_size;
         void* new_ptr = sia_push(arena, additional_size);
         
         if (new_ptr != NULL && new_ptr == (void*)((sia_u8*)ptr + old_size)) {
-            // Successfully grew in-place!
             return ptr;
         }
         
         // Failed to grow in-place, need to allocate new and copy
-        // Pop the failed attempt
         sia_pop(arena, additional_size);
     }
     
 #ifdef SIA_FORCE_MALLOC
     // Malloc backend implementation
     // TODO: For malloc backend, check if we can grow within current node
+    _sia_malloc_node* node = arena->_malloc_backend.cur_node;
+
+    sia_u8* node_start = node->data;
+    sia_u8* node_end = node_start + node->size;
+    sia_u8* ptr_u8 = (sia_u8*) ptr;
+
     // TODO: If ptr is in current node and there's space after, we can grow in-place
-    // TODO: Otherwise, allocate new memory, copy old data, return new pointer
-    
-    // For now, always allocate new and copy
-    void* new_ptr = sia_push(arena, new_size);
-    if (new_ptr == NULL) {
-        last_error.code = SIA_ERR_REALLOC_FAILED;
-        last_error.msg = "Failed to allocate new memory for realloc";
-        arena->_last_error = last_error;
-        arena->error_callback(last_error);
-        return NULL;
+    if (ptr_u8 >= node_start && ptr_u8 < node_end){
+        sia_u64 ptr_offset = ptr_u8 - node_start;
+        sia_u64 aligned_offset = SIA_ALIGN_UP_POW2(ptr_offset, arena->_align);
+        sia_u64 ptr_u8 = (sia_u8*)ptr + aligned_offset;
+
+        if (allocation_end == node->pos){
+            sia_u64 additional_size = new_size - old_size;
+            sia_u64 space_available = node->size - node->pos;
+            if (additional_size <= space_available){
+                arena->_pos = additional_size;
+                node->pos += additional_size;
+                return ptr;
+            }
+        }
+
+        void *new_ptr = sia_push(arena, new_size);
+        if (new_ptr == NULL){
+            last_error.code = SIA_ERR_REALLOC_FAILED;
+            last_error.msg = "Failed to allocate new memory for realloc";
+            arena->_last_error = last_error;
+            arena->error_callback(last_error);
+            return NULL;
+        }
+        SIA_MEMCPY(new_ptr, ptr, old_size);
+        return new_ptr;
     }
-    
-    // Copy old_size bytes from ptr to new_ptr
-    SIA_MEMCPY(new_ptr, ptr, old_size);
-    
-    return new_ptr;
 #else
     // Low-level backend implementation
-    // TODO: Check if ptr is the last allocation (can grow in-place)
-    // TODO: Calculate if ptr + old_size aligns with current arena position
-    // TODO: If yes, check if there's enough space to grow in-place
-    // TODO: If enough space, update arena->_pos and return ptr
-    // TODO: If not, allocate new memory, copy old data, return new pointer
+    sia_u8* arena_start = (sia_u8*)arena;
+    sia_u8* ptr_u8 = (sia_u8*)ptr;
+
+    if (ptr_u8 < arena_start + SIA_MIN_POS || ptr_u8 >= arena_start + arena->_size){
+    } else {
+        sia_u64 ptr_offset = ptr_u8 - arena_start;
+        sia_u64 aligned_offset = SIA_ALIGN_UP_POW2(ptr_offset, arena->_align);
+        sia_u8* allocation_end = (sia_u8*)ptr + aligned_offset + old_size;
+
+        if (allocation_end == arena->_pos){
+            sia_u64 additional_size = new_size - old_size;
+            sia_u64 space_available = arena->_size - arena->_pos;
+            if (additional_size <= space_available){
+                arena->_pos += additional_size;
+                sia_u64 commit_pos = arena->_reserve_backend.commit_pos;
+                if (arena->_pos > commit_pos){
+                    sia_u64 commit_unclamped = SIA_ALIGN_UP_POW2(arena->_pos, arena->_block_size);
+                    sia_u64 new_commit_pos = SIA_MIN(commit_unclamped, arena->_size);
+                    sia_u64 commit_size = new_commit_pos - commit_pos;
+                    if (!SIA_MEM_COMMIT((void*)((sia_u8*)arena + commit_pos), commit_size)){
+                        last_error.code = SIA_ERR_COMMIT_FAILED;
+                        last_error.msg = "Failed to commit memory";
+                        arena->_last_error = last_error;
+                        arena->error_callback(last_error);
+                        return NULL;
+                    }
+                    arena->_reserve_backend.commit_pos = new_commit_pos;
+
+                }
+                return ptr;
+            }
+        }
+    }
     
     // For now, always allocate new and copy
     void* new_ptr = sia_push(arena, new_size);
