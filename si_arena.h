@@ -701,7 +701,7 @@ void* sia_realloc(si_arena* arena, void* ptr, sia_u64 old_size, sia_u64 new_size
     
     if (new_size == 0) {
         // If new_size is 0, treat as free (but we can't actually free in arena)
-        last_error.code = SIA_ERR_INVALID_SIZE;
+        last_error.code = SIA_ERR_INVALID_PTR;
         last_error.msg = "New size is 0";
         arena->_last_error = last_error;
         arena->error_callback(last_error);
@@ -753,43 +753,44 @@ void* sia_realloc(si_arena* arena, void* ptr, sia_u64 old_size, sia_u64 new_size
     sia_u8* node_end = node_start + node->size;
     sia_u8* ptr_u8 = (sia_u8*) ptr;
 
-    // TODO: If ptr is in current node and there's space after, we can grow in-place
+    // Check if ptr is in current node and there's space after, we can grow in-place
     if (ptr_u8 >= node_start && ptr_u8 < node_end){
         sia_u64 ptr_offset = ptr_u8 - node_start;
         sia_u64 aligned_offset = SIA_ALIGN_UP_POW2(ptr_offset, arena->_align);
-        sia_u64 ptr_u8 = (sia_u8*)ptr + aligned_offset;
+        sia_u64 allocation_end = aligned_offset + old_size;
 
         if (allocation_end == node->pos){
             sia_u64 additional_size = new_size - old_size;
             sia_u64 space_available = node->size - node->pos;
             if (additional_size <= space_available){
-                arena->_pos = additional_size;
+                arena->_pos += additional_size;
                 node->pos += additional_size;
                 return ptr;
             }
         }
-
-        void *new_ptr = sia_push(arena, new_size);
-        if (new_ptr == NULL){
-            last_error.code = SIA_ERR_REALLOC_FAILED;
-            last_error.msg = "Failed to allocate new memory for realloc";
-            arena->_last_error = last_error;
-            arena->error_callback(last_error);
-            return NULL;
-        }
-        SIA_MEMCPY(new_ptr, ptr, old_size);
-        return new_ptr;
     }
+    
+    // Can't grow in-place, allocate new and copy
+    void *new_ptr = sia_push(arena, new_size);
+    if (new_ptr == NULL){
+        last_error.code = SIA_ERR_REALLOC_FAILED;
+        last_error.msg = "Failed to allocate new memory for realloc";
+        arena->_last_error = last_error;
+        arena->error_callback(last_error);
+        return NULL;
+    }
+    SIA_MEMCPY(new_ptr, ptr, old_size);
+    return new_ptr;
 #else
     // Low-level backend implementation
     sia_u8* arena_start = (sia_u8*)arena;
     sia_u8* ptr_u8 = (sia_u8*)ptr;
 
-    if (ptr_u8 < arena_start + SIA_MIN_POS || ptr_u8 >= arena_start + arena->_size){
-    } else {
+    // Check if ptr is within valid arena range
+    if (ptr_u8 >= arena_start + SIA_MIN_POS && ptr_u8 < arena_start + arena->_pos) {
         sia_u64 ptr_offset = ptr_u8 - arena_start;
         sia_u64 aligned_offset = SIA_ALIGN_UP_POW2(ptr_offset, arena->_align);
-        sia_u8* allocation_end = (sia_u8*)ptr + aligned_offset + old_size;
+        sia_u64 allocation_end = aligned_offset + old_size;
 
         if (allocation_end == arena->_pos){
             sia_u64 additional_size = new_size - old_size;
@@ -801,9 +802,11 @@ void* sia_realloc(si_arena* arena, void* ptr, sia_u64 old_size, sia_u64 new_size
                     sia_u64 commit_unclamped = SIA_ALIGN_UP_POW2(arena->_pos, arena->_block_size);
                     sia_u64 new_commit_pos = SIA_MIN(commit_unclamped, arena->_size);
                     sia_u64 commit_size = new_commit_pos - commit_pos;
-                    if (!SIA_MEM_COMMIT((void*)((sia_u8*)arena + commit_pos), commit_size)){
+                    if (!SIA_MEM_COMMIT((void*)(arena_start + commit_pos), commit_size)){
+                        // Rollback arena->_pos on commit failure
+                        arena->_pos -= additional_size;
                         last_error.code = SIA_ERR_COMMIT_FAILED;
-                        last_error.msg = "Failed to commit memory";
+                        last_error.msg = "Failed to commit memory for realloc";
                         arena->_last_error = last_error;
                         arena->error_callback(last_error);
                         return NULL;
@@ -816,7 +819,7 @@ void* sia_realloc(si_arena* arena, void* ptr, sia_u64 old_size, sia_u64 new_size
         }
     }
     
-    // For now, always allocate new and copy
+    // Can't grow in-place, allocate new and copy
     void* new_ptr = sia_push(arena, new_size);
     if (new_ptr == NULL) {
         last_error.code = SIA_ERR_REALLOC_FAILED;
