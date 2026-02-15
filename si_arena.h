@@ -713,8 +713,14 @@ si_arena* sia_merge(si_arena** arenas, sia_u32 num_arenas){
     if (arenas == NULL || num_arenas == 0) {
         last_error.code = SIA_ERR_INVALID_PTR;
         last_error.msg = "Arenas are NULL or empty";
-        arena->_last_error = last_error;
-        arena->error_callback(last_error);
+        if (_sia_global_error_callback != NULL) {
+            _sia_global_error_callback(last_error);
+        }
+#ifndef SIA_NO_STDIO
+        else {
+            _sia_stderr_error_callback(last_error);
+        }
+#endif
         return NULL;
     }
 
@@ -723,11 +729,21 @@ si_arena* sia_merge(si_arena** arenas, sia_u32 num_arenas){
         if (arenas[i] == NULL) {
             last_error.code = SIA_ERR_INVALID_PTR;
             last_error.msg = "Arena is NULL";
-            arena->_last_error = last_error;
-            arena->error_callback(last_error);
+            if (_sia_global_error_callback != NULL) {
+                _sia_global_error_callback(last_error);
+            }
+#ifndef SIA_NO_STDIO
+            else {
+                _sia_stderr_error_callback(last_error);
+            }
+#endif
             return NULL;
         }
-        total_size += arenas[i]->_size;
+#ifdef SIA_FORCE_MALLOC
+        total_size += arenas[i]->_pos;
+#else
+        total_size += arenas[i]->_pos - SIA_MIN_POS;
+#endif
     }
 
     sia_u32 max_block_size = 0;
@@ -770,7 +786,6 @@ si_arena* sia_merge(si_arena** arenas, sia_u32 num_arenas){
          return NULL;
      }
      
-     // TODO: Copy data from each source arena to merged arena
      for (sia_u32 i = 0; i < num_arenas; i++) {
         sia_u64 merged_pos_before = sia_get_pos(merged);
         si_arena* src = arenas[i];
@@ -786,6 +801,7 @@ si_arena* sia_merge(si_arena** arenas, sia_u32 num_arenas){
                     last_error.msg = "Failed to allocate memory for merge";
                     merged->_last_error = last_error;
                     merged->error_callback(last_error);
+                    sia_destroy(merged);
                     return NULL;
                 }
                 SIA_MEMCPY(dst, node->data, copy_size);
@@ -810,8 +826,30 @@ si_arena* sia_merge(si_arena** arenas, sia_u32 num_arenas){
         }
 #endif
     }
+    
+    // Validate merge was successful
+    sia_u64 merged_used = sia_get_pos(merged);
+#ifdef SIA_FORCE_MALLOC
+    if (merged_used != total_size) {
+        last_error.code = SIA_ERR_MERGE_FAILED;
+        last_error.msg = "Merge validation failed: size mismatch";
+        merged->_last_error = last_error;
+        merged->error_callback(last_error);
+        sia_destroy(merged);
+        return NULL;
+    }
+#else
+    if (merged_used - SIA_MIN_POS != total_size) {
+        last_error.code = SIA_ERR_MERGE_FAILED;
+        last_error.msg = "Merge validation failed: size mismatch";
+        merged->_last_error = last_error;
+        merged->error_callback(last_error);
+        sia_destroy(merged);
+        return NULL;
+    }
+#endif
      
-     return merged;
+    return merged;
 }
 
 void* sia_realloc(si_arena* arena, void* ptr, sia_u64 old_size, sia_u64 new_size) {
