@@ -115,4 +115,23 @@ SIT_FUNC_DEF void sit_textf(sit_canvas* c, sia_u32 x, sia_u32 y, sit_color fg, s
 SIT_FUNC_DEF void sit_line(sit_canvas* c, sia_u32 x0, sia_u32 y0, sia_u32 x1, sia_u32 y1,
      sia_u32 ch, sit_color fg, sit_color bg);
 
+// widgets 
+
+SIT_FUNC_DEF void sit_progress_bar(sit_canvas* canvas, sia_u32 x, sia_u32 y, sia_u32 w, sia_u32 h, float progress);
+SIT_FUNC_DEF void sit_bar_chart(sit_canvas* canvas, sia_u32 x, sia_u32 y, sia_u32 w, sia_u32 h, const float* values, sia_u32 num_values);
+SIT_FUN_DEF void sit_sparkline(sit_canvas* canvas, sia_u32 x, sia_u32 y, sia_u32 w, sia_u32 h, const float* values, sia)
+SIT_FUNC_DEF void sit_table(sit_canvas* c, sia_u32 x, sia_u32 y,
+    const sit_table_data* data, sit_box_style border,
+    sit_color header_fg, sit_color cell_fg, sit_color border_fg, sit_color bg);
+SIT_FUNC_DEF void sit_separator(sit_canvas* c, sia_u32 x, sia_u32 y, sia_u32 width,
+        const char* label, sit_color fg, sit_color bg);
+SIT_FUNC_DEF void sit_gradient_rect(sit_canvas* c, sia_u32 x, sia_u32 y, sia_u32 w, sia_u32 h,
+            sia_u32 ch, sit_color left, sit_color right);
+
+
+SIT_FUNC_DEF void sit_enter_alt_screen(void);
+SIT_FUNC_DEF void sit_leave_alt_screen(void);
+SIT_FUNC_DEF void sit_get_term_size(sia_u32* out_w, sia_u32* out_h);
+SIT_FUNC_DEF void sit_hide_cursor(void);
+SIT_FUNC_DEF void sit_show_cursor(void);
 }
