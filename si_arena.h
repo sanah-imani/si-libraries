@@ -128,40 +128,6 @@ SIA_FUNC_DEF void sia_scratch_release(sia_temp scratch);
 SIA_FUNC_DEF si_arena*  sia_merge(si_arena** arenas, sia_u32 num_arenas);
 
 
-typedef struct _sia_pool_block{
-    struct _sia_pool_block* next;
-} _sia_pool_block;
-
-typedef struct{
-    si_arena* arena;
-    sia_u64 block_size;
-    sia_u32 align;
-
-    _sia_pool_block* free_list;
-    sia_u64 total_blocks;
-    sia_u64 free_blocks;
-    void* block_memory;
-} _sia_pool;
-
-typedef struct {
-    si_arena* arena;
-    sia_u64 block_size;
-    sia_u32 align;
-    sia_u64 initial_capacity;
-} sia_pool_desc;
-
-// Memory Pool functions
-SIA_FUNC_DEF sia_pool* sia_pool_create(const sia_pool_desc* desc);
-SIA_FUNC_DEF void sia_pool_destroy(sia_pool* pool);
-SIA_FUNC_DEF void* sia_pool_alloc(sia_pool* pool);
-SIA_FUNC_DEF void* sia_pool_alloc_zero(sia_pool* pool);
-SIA_FUNC_DEF void sia_pool_free(sia_pool* pool, void* ptr);
-SIA_FUNC_DEF sia_b32 sia_pool_grow(sia_pool* pool, sia_u64 num_blocks);
-SIA_FUNC_DEF sia_u64 sia_pool_get_block_size(sia_pool* pool);
-SIA_FUNC_DEF sia_u64 sia_pool_get_capacity(sia_pool* pool);
-SIA_FUNC_DEF sia_u64 sia_pool_get_used(sia_pool* pool);
-SIA_FUNC_DEF sia_u64 sia_pool_get_free(sia_pool* pool);
-
 // Memory Pool structures
 typedef struct _sia_pool_block {
     struct _sia_pool_block* next;
@@ -1156,6 +1122,85 @@ sia_pool* sia_pool_create(const sia_pool_desc* desc) {
 
     return pool;
 }
+
+void sia_pool_destroy(sia_pool* pool) {
+    SIA_UNUSED(pool);
+}
+
+sia_b32 sia_pool_grow(sia_pool* pool, sia_u64 num_blocks) {
+    if (pool == NULL || num_blocks == 0) return SIA_FALSE;
+
+    sia_u64 aligned_block = SIA_ALIGN_UP_POW2(pool->block_size, pool->align);
+    sia_u64 alloc_size = aligned_block * num_blocks;
+    void* mem = sia_push(pool->arena, alloc_size);
+    if (mem == NULL) return SIA_FALSE;
+
+    sia_u8* ptr = (sia_u8*)mem;
+    for (sia_u64 i = 0; i < num_blocks; i++) {
+        _sia_pool_block* block = (_sia_pool_block*)(ptr + i * aligned_block);
+        block->next = pool->free_list;
+        pool->free_list = block;
+    }
+
+    if (pool->block_memory == NULL) {
+        pool->block_memory = mem;
+    }
+
+    pool->total_blocks += num_blocks;
+    pool->free_blocks += num_blocks;
+    return SIA_TRUE;
+}
+
+void* sia_pool_alloc(sia_pool* pool) {
+    if (pool == NULL) return NULL;
+    if (pool->free_list == NULL) {
+        if (!sia_pool_grow(pool, pool->total_blocks > 0 ? pool->total_blocks : 8)) {
+            last_error.code = SIA_ERR_POOL_FULL;
+            last_error.msg = "Pool is full and could not grow";
+            pool->arena->_last_error = last_error;
+            pool->arena->error_callback(last_error);
+            return NULL;
+        }
+    }
+    _sia_pool_block* block = pool->free_list;
+    pool->free_list = block->next;
+    pool->free_blocks--;
+    return (void*)block;
+}
+
+void* sia_pool_alloc_zero(sia_pool* pool) {
+    void* ptr = sia_pool_alloc(pool);
+    if (ptr != NULL) {
+        SIA_MEMSET(ptr, 0, pool->block_size);
+    }
+    return ptr;
+}
+
+void sia_pool_free(sia_pool* pool, void* ptr) {
+    if (pool == NULL || ptr == NULL) return;
+
+    sia_u8* p = (sia_u8*)ptr;
+    sia_u8* base = (sia_u8*)pool->block_memory;
+    sia_u64 aligned_block = SIA_ALIGN_UP_POW2(pool->block_size, pool->align);
+
+    if (p < base || ((sia_u64)(p - base) % aligned_block) != 0) {
+        last_error.code = SIA_ERR_INVALID_POOL_PTR;
+        last_error.msg = "Invalid pointer returned to pool";
+        pool->arena->_last_error = last_error;
+        pool->arena->error_callback(last_error);
+        return;
+    }
+
+    _sia_pool_block* block = (_sia_pool_block*)ptr;
+    block->next = pool->free_list;
+    pool->free_list = block;
+    pool->free_blocks++;
+}
+
+sia_u64 sia_pool_get_block_size(sia_pool* pool) { return pool->block_size; }
+sia_u64 sia_pool_get_capacity(sia_pool* pool)   { return pool->total_blocks; }
+sia_u64 sia_pool_get_used(sia_pool* pool)       { return pool->total_blocks - pool->free_blocks; }
+sia_u64 sia_pool_get_free(sia_pool* pool)       { return pool->free_blocks; }
 
 void sia_pop_to(si_arena* arena, sia_u64 pos) {
     sia_pop(arena, arena->_pos - pos);
