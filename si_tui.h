@@ -134,4 +134,60 @@ SIT_FUNC_DEF void sit_leave_alt_screen(void);
 SIT_FUNC_DEF void sit_get_term_size(sia_u32* out_w, sia_u32* out_h);
 SIT_FUNC_DEF void sit_hide_cursor(void);
 SIT_FUNC_DEF void sit_show_cursor(void);
+
+#ifdef __cplusplus
+}
+
+#endif 
+
+#endif // SI_TUI_H
+
+
+#ifdef SI_TUI_IMPL 
+
+sit_canvas* sit_canvas_create(si_arena* arena, sia_u32 width, sia_u32 height) {
+    sit_canvas* canvas = SIT_PUSH_ZERO_STRUCT(arena, sit_canvas);
+    c->arena = arena;
+    c->width = width;
+    c->height = height;
+    c->cells = SIA_PUSH_ZERO_ARRAY(arena, sit_cell, width * height);
+    c->prev = SIA_PUSH_ZERO_ARRAY(arena, sit_cell, width * height);
+    c->clear_fg = SIT_WHITE;
+    c->clear_bg = SIT_BLACK;
+    return c;
+}
+
+void sit_clear(sit_canvas* canvas){
+    sia_u32 total = canvas->width * canvas->height;
+    for (sia_u32 i = 0; i < total; i++){
+        canvas->cells[i].ch = ' ';
+        canvas->cells[i].fg = canvas->clear_fg;
+        canvas->cells[i].bg = canvas->clear_bg;
+        canvas->cells[i].attrs = SIT_ATTR_NONE;
+    }
+}
+
+void sit_put(sit_canvas* canvas, sia_u32 x, sia_u32 y,  sia_u32 ch,
+    sit_color fg, sit_color bg, sia_u8 attrs){
+
+    if (x >= canvas->width || y >= canvas->height){
+        return;
+    }
+
+    sia_u32 index = y * canvas->width + x;
+    canvas->cells[index].ch = ch;
+    canvas->cells[index].fg = fg;
+    canvas->cells[index].bg = bg;
+    canvas->cells[index].attrs = attrs;
+}
+
+void sit_text(sit_canvas* c, sia_u32 x, sia_u32 y, const char* str,
+    sit_color fg, sit_color bg, sia_u8 attrs) {
+sia_u32 cx = x;
+while (*str) {
+if (cx >= c->width) break;
+sit_put(c, cx, y, (sia_u32)(sia_u8)*str, fg, bg, attrs);
+cx++;
+str++;
+}
 }
