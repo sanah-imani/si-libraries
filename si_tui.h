@@ -1,6 +1,8 @@
 #ifndef SI_TUI_H
 #define SI_TUI_H 
 
+#include <sys/_pthread/_pthread_t.h>
+#include <sys/_types/_pid_t.h>
 #ifndef SIT_FUNC_DEF 
 #   if defined(SIT_STATIC)
 #       define SIT_FUNC_DEF static
@@ -95,6 +97,47 @@ typedef struct {
     sia_u32 num_rows;
 } sit_table_data;
 
+/* =========================================================================
+   Input
+   ========================================================================= */
+typedef enum {
+    SIT_KEY_NONE,
+    SIT_KEY_CHAR,
+    SIT_KEY_ESC,
+    SIT_KEY_ENTER,
+    SIT_KEY_BACKSPACE,
+    SIT_KEY_TAB,
+    SIT_KEY_UP,
+    SIT_KEY_DOWN,
+    SIT_KEY_LEFT,
+    SIT_KEY_RIGHT,
+    SIT_KEY_HOME,
+    SIT_KEY_END,
+    SIT_KEY_PAGE_UP,
+    SIT_KEY_PAGE_DOWN,
+    SIT_KEY_DELETE,
+} sit_key_kind;
+
+
+#define SIT_MOD_CTRL  0x01
+#define SIT_MOD_ALT   0x02
+#define SIT_MOD_SHIFT 0x04
+
+typedef struct {
+    sit_key_kind kind;
+    char ch;
+    sia_u8 mods;
+} sit_key;
+
+
+
+typedef struct {
+    sit_b32 quit;
+    sit_b32 resized;
+    sit_key key;
+} sit_event;
+
+
 SIT_FUNC_DEF sit_canvas* sit_canvas_create(si_arena* arena, sia_u32 width, sia_u32 height);
 SIT_FUNC_DEF void sit_clear(sit_canvas* canvas);
 SIT_FUNC_DEF void sit_flush(sit_canvas* canvas);
@@ -135,6 +178,31 @@ SIT_FUNC_DEF void sit_get_term_size(sia_u32* out_w, sia_u32* out_h);
 SIT_FUNC_DEF void sit_hide_cursor(void);
 SIT_FUNC_DEF void sit_show_cursor(void);
 
+// event handling 
+
+SIT_FUNC_DEF void sit_enter_raw_mode(void);
+SIT_FUNC_DEF void sit_leave_raw_mode(void);
+SIT_FUNC_DEF sit_b32 sit_poll_event(sit_event* out);
+
+/* =========================================================================
+   Clip rect (stack-based, up to 8 levels)
+   ========================================================================= */
+SIT_FUNC_DEF void sit_clip_push(sit_canvas* c, sia_u32 x, sia_u32 y, sia_u32 w, sia_u32 h);
+SIT_FUNC_DEF void sit_clip_pop(sit_canvas* c);
+
+
+/* =========================================================================
+   Color / canvas utilities
+========================================================================= */
+SIT_FUNC_DEF sit_color sit_color_lerp(sit_color from, sit_color to, float t);
+SIT_FUNC_DEF void sit_canvas_resize(si_arena* arena, sit_canvas* c, sia_u32 w, sia_u32 h);
+
+/* =========================================================================
+Text helpers
+========================================================================= */
+SIT_FUNC_DEF sia_u32 sit_text_width(const char* str);
+SIT_FUNC_DEF void sit_text_clip(sit_canvas* c, sia_u32 x, sia_u32 y, sia_u32 max_w,
+    const char* str, sit_color fg, sit_color bg, sia_u8 attrs);
 #ifdef __cplusplus
 }
 
@@ -149,6 +217,12 @@ SIT_FUNC_DEF void sit_show_cursor(void);
 #include <stdarg.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
+#include <signal.h>
+#include <termios.h>
+
+static struct termios _sit_orig_termios;
+static sit_b32 _sit_raw_mode = SIT_FALSE;
+static volatile sit_b32 _sit_term_resized = SIT_FALSE;
 
 sit_canvas* sit_canvas_create(si_arena* arena, sia_u32 width, sia_u32 height) {
     sit_canvas* canvas = SIA_PUSH_ZERO_STRUCT(arena, sit_canvas);
@@ -635,10 +709,93 @@ void sit_get_term_size(sia_u32* out_w, sia_u32* out_h) {
     }
 }
 
-void sit_sparkline(sit_canvas* canvas, sia_u32 x, sia_u32 y, sia_u32 w, sia_u32 h, const float* values, sia_u32 num_values){
-    if (num_values == 0 || h == 0 || w == 0) return;
-    
+static float _sit_spark_sample(const float* values, sia_u32 num_values, sia_u32 col, sia_u32 w){
+    if (num_values == 0) return 0.0f;
+    if (num_values == 1 || w <= 1) return values[0];
+
+    float u = (float) col / (float) (w-1);
+    float idx = u * (float)(num_values-1);
+    sia_u32 idx_lo = (sia_u32)idx;
+    sia_u32 idx_hi = idx_lo + 1;
+
+    if (idx_hi >= num_values) idx_hi = num_values - 1;
+    float blend = idx - (float)idx_lo;                       /* 0 = at lo, 1 = at hi */
+    return values[idx_lo] * (1.0f - blend) + values[idx_hi] * blend;
 }
+
+void sit_sparkline(sit_canvas* canvas, sia_u32 x, sia_u32 y, sia_u32 w, sia_u32 h, const float* values, sia_u32 num_values){
+    if (!canvas || !values || num_values == 0 || h == 0 || w == 0) return;
+    float min_val = values[0];
+    float max_val = values[0];
+
+    for (sia_u32 i = 1; i < num_values; i++){
+        if (values[i] < min_val) min_val = values[i];
+        if (values[i] > max_val) max_val = values[i];
+    }
+
+    float range = max_val - min_val; 
+
+    if (range <= 0.0f){
+        sia_u32 base_y = y + h - 1;
+        for (sia_u32 col = 0; col < w; col++){
+            sit_put(canvas, x + col, base_y, 0x2588, SIT_GRAY, SIT_BLACK, SIT_ATTR_NONE);
+        }
+        return;
+    }
+
+    if (h == 1){
+        for (sia_u32 col = 0; col < w; col++){
+            float v = _sit_spark_sample(values, num_values, col, w);
+            float norm = (v - min_val) / range;
+            sia_u32 level = (sia_u32)(norm * (h-1));
+            if (level > 7) level = 7;
+            sit_put(canvas, x + col, y, 0x2581 + level, SIT_GREEN, SIT_BLACK, SIT_ATTR_NONE);
+        }
+        return;
+    }
+
+    sia_u32 prev_px = 0, prev_py = 0;
+    sit_b32 have_prev = SIT_FALSE;
+
+    for (sia_u32 col = 0; col < w; col++){
+        float v = _sit_spark_sample(values, num_values, col, w);
+        float norm = (v - min_val) / range;
+
+        sia_u32 px = x + col; 
+        sia_u32 py = y + (h-1) - (sia_u32)(norm * (h-1));
+
+        if (have_prev){
+            sit_line(canvas, prev_px, prev_py, px, py, 0x2588, SIT_GREEN, SIT_BLACK);
+        }
+        prev_px = px;
+        prev_py = py;
+        have_prev = SIT_TRUE;
+    }
+}
+
+static void _sit_on_winch(int sig){
+    (void)sig;
+    _sit_term_resized = SIT_TRUE;
+}
+
+void sit_enter_raw_mode(void){
+    if (_sit_raw_mode) return;
+
+    tcgetattr(STDIN_FILENO, &_sit_orig_termios);
+
+    struct termios raw = _sit_orig_termios;
+    raw.c_iflag &= (tcflag_t) ~(ICANON| ECHO);
+    raw.c_cc[VMIN] = 0;
+    raw.c_cc[VTIME] = 1;
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+    struct sigaction sa;
+    sa.sa_handler = _sit_on_winch;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGWINCH, &sa, NULL);
+    _sit_raw_mode = SIT_TRUE;
+}
+
 #endif /* SI_TUI_IMPL */
 
 /*
