@@ -8,3 +8,9 @@ replit.nix
 bin
 **.json
 **.csv
+
+# Generated build / editor artifacts
+compile_commands.json
+*.o
+dev/si_impl
+*.dSYM

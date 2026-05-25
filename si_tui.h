@@ -148,6 +148,7 @@ SIT_FUNC_DEF void sit_show_cursor(void);
 #include <stdio.h>
 #include <stdarg.h>
 #include <unistd.h>
+#include <sys/ioctl.h>
 
 sit_canvas* sit_canvas_create(si_arena* arena, sia_u32 width, sia_u32 height) {
     sit_canvas* canvas = SIA_PUSH_ZERO_STRUCT(arena, sit_canvas);
@@ -458,7 +459,7 @@ void sit_bar_chart(sit_canvas* canvas, sia_u32 x, sia_u32 y, sia_u32 w, sia_u32 
     }
 }
 
-void sit_table(sit_canvas* c, sia_u32 x, sia_u32 y, const sit_table_data* data, sit_box_style border, sit color_fg, sit_color_bg){
+void sit_table(sit_canvas* c, sia_u32 x, sia_u32 y, const sit_table_data* data, sit_box_style border, sit_color header_fg, sit_color cell_fg, sit_color border_fg, sit_color bg){
     if (data == NULL || data->num_cols == 0 || data->num_rows == 0) return;
 
     sia_temp scratch = sia_scratch_get(&c->arena, 1);
@@ -522,7 +523,7 @@ void sit_table(sit_canvas* c, sia_u32 x, sia_u32 y, const sit_table_data* data, 
         cx = x + 1;
         for (sia_u32 col = 0; col < data->num_cols; col++){
             for (sia_u32 i = 0; i < col_w[col]; i++){
-                sit_put(c, cx++, cy, bc->h )
+                sit_put(c, cx++, cy, bc->h, border_fg, bg, SIT_ATTR_NONE);
             }
             if (col < data->num_cols - 1){
                 sit_put(c, cx++, cy, 0x253C, border_fg, bg, SIT_ATTR_NONE); /* ┼ */
@@ -559,6 +560,79 @@ void sit_table(sit_canvas* c, sia_u32 x, sia_u32 y, const sit_table_data* data, 
     }
     sit_put(c, cx, cy, bc->br, border_fg, bg, SIT_ATTR_NONE);
     sia_scratch_release(scratch);
+}
+
+static sit_color _sit_lerp_color(sit_color from, sit_color to, float t) {
+    return (sit_color){
+        .r = (sia_u8)(from.r + (to.r - from.r) * t),
+        .g = (sia_u8)(from.g + (to.g - from.g) * t),
+        .b = (sia_u8)(from.b + (to.b - from.b) * t),
+    };
+}
+
+static void _sit_tty_cmd(const char* cmd) {
+    size_t len = 0;
+    while (cmd[len]) len++;
+    write(STDOUT_FILENO, cmd, len);
+}
+
+void sit_separator(sit_canvas* c, sia_u32 x, sia_u32 y, sia_u32 width,
+        const char* label, sit_color fg, sit_color bg) {
+    if (width == 0) return;
+
+    sia_u32 label_len = 0;
+    if (label) {
+        while (label[label_len]) label_len++;
+    }
+
+    if (label_len == 0 || label_len + 2 >= width) {
+        for (sia_u32 i = 0; i < width; i++)
+            sit_put(c, x + i, y, 0x2500, fg, bg, SIT_ATTR_NONE);
+        return;
+    }
+
+    sia_u32 dash_total = width - label_len - 2;
+    sia_u32 dash_left = dash_total / 2;
+    sia_u32 dash_right = dash_total - dash_left;
+    sia_u32 cx = x;
+
+    for (sia_u32 i = 0; i < dash_left; i++)
+        sit_put(c, cx++, y, 0x2500, fg, bg, SIT_ATTR_NONE);
+    sit_put(c, cx++, y, ' ', fg, bg, SIT_ATTR_NONE);
+    sit_text(c, cx, y, label, fg, bg, SIT_ATTR_NONE);
+    cx += label_len;
+    sit_put(c, cx++, y, ' ', fg, bg, SIT_ATTR_NONE);
+    for (sia_u32 i = 0; i < dash_right; i++)
+        sit_put(c, cx++, y, 0x2500, fg, bg, SIT_ATTR_NONE);
+}
+
+void sit_gradient_rect(sit_canvas* c, sia_u32 x, sia_u32 y, sia_u32 w, sia_u32 h,
+        sia_u32 ch, sit_color left, sit_color right) {
+    if (w == 0 || h == 0) return;
+
+    for (sia_u32 row = 0; row < h; row++) {
+        for (sia_u32 col = 0; col < w; col++) {
+            float t = (w <= 1) ? 0.0f : (float)col / (float)(w - 1);
+            sit_color fg = _sit_lerp_color(left, right, t);
+            sit_put(c, x + col, y + row, ch, fg, SIT_BLACK, SIT_ATTR_NONE);
+        }
+    }
+}
+
+void sit_enter_alt_screen(void) { _sit_tty_cmd("\033[?1049h"); }
+void sit_leave_alt_screen(void) { _sit_tty_cmd("\033[?1049l"); }
+void sit_hide_cursor(void)       { _sit_tty_cmd("\033[?25l"); }
+void sit_show_cursor(void)       { _sit_tty_cmd("\033[?25h"); }
+
+void sit_get_term_size(sia_u32* out_w, sia_u32* out_h) {
+    struct winsize size;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0) {
+        if (out_w) *out_w = size.ws_col;
+        if (out_h) *out_h = size.ws_row;
+    } else {
+        if (out_w) *out_w = 80;
+        if (out_h) *out_h = 24;
+    }
 }
 
 void sit_sparkline(sit_canvas* canvas, sia_u32 x, sia_u32 y, sia_u32 w, sia_u32 h, const float* values, sia_u32 num_values){

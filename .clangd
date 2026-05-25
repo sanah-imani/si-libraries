@@ -1,0 +1,41 @@
+CompileFlags:
+  Add:
+    - -std=c11
+    - -Wall
+    - -Wextra
+
+---
+If:
+  PathMatch: si_arena\.h
+CompileFlags:
+  Add:
+    - -DSI_ARENA_IMPL
+
+---
+If:
+  PathMatch: si_tui\.h
+CompileFlags:
+  Add:
+    - -include
+    - si_arena.h
+    - -DSI_ARENA_IMPL
+    - -DSI_TUI_IMPL
+
+---
+If:
+  PathMatch: si_pack\.h
+CompileFlags:
+  Add:
+    - -include
+    - si_arena.h
+    - -DSI_ARENA_IMPL
+    - -DSI_PACK_IMPL
+
+---
+If:
+  PathMatch: dev/.*\.c
+CompileFlags:
+  Add:
+    - -DSI_ARENA_IMPL
+    - -DSI_TUI_IMPL
+    - -DSI_PACK_IMPL
