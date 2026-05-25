@@ -408,6 +408,163 @@ void sit_flush_full(sit_canvas* canvas){
     canvas->cells = tmp;
     sia_scratch_release(scratch);
 }
+
+void sit_progress_bar(sit_canvas* canvas, sia_u32 x, sia_u32 y,
+    sia_u32 w, sia_u32 h, float progress) {
+    if (progress < 0.0f) progress = 0.0f;
+    if (progress > 1.0f) progress = 1.0f;
+    sia_u32 filled = (sia_u32)(progress * w);
+    for (sia_u32 row = 0; row < h; row++) {
+        for (sia_u32 col = 0; col < w; col++) {
+            if (col < filled) {
+            sit_put(canvas, x + col, y + row, 0x2588, SIT_GREEN, SIT_BLACK, SIT_ATTR_NONE);
+            } else {
+            sit_put(canvas, x + col, y + row, 0x2591, SIT_GRAY, SIT_BLACK, SIT_ATTR_NONE);
+            }
+        }
+    }
+}
+
+void sit_bar_chart(sit_canvas* canvas, sia_u32 x, sia_u32 y, sia_u32 w, sia_u32 h, const float* values, sia_u32 num_values){
+
+    if (num_values == 0 || h == 0 || w == 0) return;
+
+    float max_val = values[0];
+
+    for (sia_u32 i = 1; i < num_values; i++){
+        if (values[i] > max_val) max_val = values[i];   
+    }
+    if (max_val <= 0.0f) return;
+    
+
+    sia_u32 bar_width = w / num_values;
+
+    if (bar_width == 0) bar_width = 1;
+
+    for (sia_u32 i = 0; i < num_values; i++){
+        sia_u32 bar_x = x + i * bar_width;
+        sia_u32 bar_h = (sia_u32)(values[i] / max_val * h);
+
+        for (sia_u32 col = 0; col < bar_width; col++){
+            for (sia_u32 row = 0; row < h; row++){
+                sia_u32 py = y + (h - 1 - row);
+                if (row < bar_h) {
+                    sit_put(canvas, bar_x + col, py, 0x2588, SIT_GREEN, SIT_BLACK, SIT_ATTR_NONE);
+                } else {
+                    sit_put(canvas, bar_x + col, py, 0x2591, SIT_GRAY, SIT_BLACK, SIT_ATTR_NONE);
+                }
+            }
+        }
+    }
+}
+
+void sit_table(sit_canvas* c, sia_u32 x, sia_u32 y, const sit_table_data* data, sit_box_style border, sit color_fg, sit_color_bg){
+    if (data == NULL || data->num_cols == 0 || data->num_rows == 0) return;
+
+    sia_temp scratch = sia_scratch_get(&c->arena, 1);
+
+    sia_u32* col_w = SIA_PUSH_ARRAY(scratch.arena, sia_u32, data->num_cols);
+
+    for (sia_u32 col = 0; col < data->num_cols; col++){
+        if (data->headers != NULL) {
+            sia_u32 len = 0;
+            const char* s = data->headers[col];
+            while (s && *s) { len++; s++; }
+            if (len > col_w[col]) col_w[col] = len;
+        }
+
+        for (sia_u32 row = 0; row < data->num_rows; row++) {
+            sia_u32 len = 0;
+            const char* s = data->rows[row * data->num_cols + col];
+            while (s && *s) { len++; s++; }
+            if (len > col_w[col]) col_w[col] = len;
+        }
+        col_w[col] += 2; /* 1 char padding each side */
+
+    }
+
+    const _sit_box_chars* bc = &_sit_box_table[border];
+
+    sia_u32 total_w = 0;
+
+    for (sia_u32 col = 0; col < data->num_cols; col++){
+        total_w += col_w[col]+1;
+    }
+
+    sia_u32 cy = y;
+
+    sit_put(c, x, cy, bc->tl, border_fg, bg, SIT_ATTR_NONE);
+    sia_u32 cx = x + 1;
+    for (sia_u32 col = 0; col < data->num_cols; col++){
+        for (sia_u32 i = 0; i < col_w[col]; i++){
+            sit_put(c, cx++, cy, bc->h, border_fg, bg, SIT_ATTR_NONE);
+        }
+        if (col < data->num_cols - 1)
+            sit_put(c, cx++, cy, 0x252C, border_fg, bg, SIT_ATTR_NONE); /* ┬ */
+    }
+
+    sit_put(c, cx, cy, bc->tr, border_fg, bg, SIT_ATTR_NONE);
+    cy++;
+
+    if (data->headers != NULL){
+        sit_put(c, x, cy, bc->v, border_fg, bg, SIT_ATTR_NONE);
+        cx = x + 1;
+
+        for (sia_u32 col = 0; col < data->num_cols; col++){
+            sit_put(c, cx, cy, ' ', header_fg, bg, SIT_ATTR_NONE);
+            sit_text(c, cx + 1, cy, data->headers[col], header_fg, bg, SIT_ATTR_BOLD);
+            cx += col_w[col];
+            sit_put(c, cx++, cy, bc->v, border_fg, bg, SIT_ATTR_NONE);
+        }
+        cy++;
+
+        sit_put(c, cx, cy, bc->v, border_fg, bg, SIT_ATTR_NONE);
+        cx = x + 1;
+        for (sia_u32 col = 0; col < data->num_cols; col++){
+            for (sia_u32 i = 0; i < col_w[col]; i++){
+                sit_put(c, cx++, cy, bc->h )
+            }
+            if (col < data->num_cols - 1){
+                sit_put(c, cx++, cy, 0x253C, border_fg, bg, SIT_ATTR_NONE); /* ┼ */
+            }
+        }
+        sit_put(c, cx, cy, 0x2524, border_fg, bg, SIT_ATTR_NONE); /* ╤ */
+        cy++;
+    }
+
+
+    /* Data rows*/
+
+    for (sia_u32 row = 0; row < data->num_rows; row++){
+        sit_put(c, x, cy, bc->v, border_fg, bg, SIT_ATTR_NONE);
+        cx = x + 1;
+        for (sia_u32 col = 0; col < data->num_cols; col++){
+            sit_put(c, cx, cy, ' ', cell_fg, bg, SIT_ATTR_NONE);
+            const char* cell = data->rows[row * data->num_cols + col];
+            if (cell) sit_text(c, cx + 1, cy, cell, cell_fg, bg, SIT_ATTR_NONE);
+            cx += col_w[col];
+            sit_put(c, cx++, cy, bc->v, border_fg, bg, SIT_ATTR_NONE);
+        }
+        cy++;
+    }
+
+    /* Bottom border:  └────┴────┘ */
+    sit_put(c, x, cy, bc->bl, border_fg, bg, SIT_ATTR_NONE);
+    cx = x + 1;
+    for (sia_u32 col = 0; col < data->num_cols; col++) {
+        for (sia_u32 i = 0; i < col_w[col]; i++)
+            sit_put(c, cx++, cy, bc->h, border_fg, bg, SIT_ATTR_NONE);
+        if (col < data->num_cols - 1)
+            sit_put(c, cx++, cy, 0x2534, border_fg, bg, SIT_ATTR_NONE); /* ┴ */
+    }
+    sit_put(c, cx, cy, bc->br, border_fg, bg, SIT_ATTR_NONE);
+    sia_scratch_release(scratch);
+}
+
+void sit_sparkline(sit_canvas* canvas, sia_u32 x, sia_u32 y, sia_u32 w, sia_u32 h, const float* values, sia_u32 num_values){
+    if (num_values == 0 || h == 0 || w == 0) return;
+    
+}
 #endif /* SI_TUI_IMPL */
 
 /*
