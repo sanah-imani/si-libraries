@@ -933,6 +933,39 @@ sit_b32 sit_poll_event(sit_event* out){
     return SIT_TRUE;
 }
 
+sia_u32 sit_text_width(const char* str){
+    sia_u32 n = 0;
+    if (!str) return 0; 
+    while(str[n]) n++;
+    return n;
+}
+
+void sit_text_clip(sit_canvas* c,sia_u32 x, sia_u32 y, sia_u32 max_w,
+    const char* str, sit_color fg, sit_color bg, sia_u8 attrs){
+    
+    if (!c || !str || max_w == 0) return;
+    sia_u32 cx = x;
+    sia_u32 drawn = 0;
+
+    while (*str && drawn < max_w){
+        if (cx >= c->width) break;
+        sit_put(c, cx, y, (sia_u32)(sia_u8)*str, fg, bg, attrs);
+        cx++;
+        str++;
+        drawn++;
+    }
+}
+
+void sit_canvas_resize(si_arena* arena, sit_canvas* c, sia_u32 w, sia_u32 h) {
+    if (!c || !arena || w == 0 || h == 0) return;
+    if (c->width == w && c->height == h) return;
+    sia_u32 total = w * h;
+    c->cells = SIA_PUSH_ZERO_ARRAY(arena, sit_cell, total);
+    c->prev  = SIA_PUSH_ZERO_ARRAY(arena, sit_cell, total);
+    c->width = w;
+    c->height = h;
+}
+
 #endif /* SI_TUI_IMPL */
 
 /*
