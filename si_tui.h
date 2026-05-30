@@ -747,7 +747,7 @@ void sit_sparkline(sit_canvas* canvas, sia_u32 x, sia_u32 y, sia_u32 w, sia_u32 
         for (sia_u32 col = 0; col < w; col++){
             float v = _sit_spark_sample(values, num_values, col, w);
             float norm = (v - min_val) / range;
-            sia_u32 level = (sia_u32)(norm * (h-1));
+            sia_u32 level = (sia_u32)(norm * 7.0f + 0.5f);
             if (level > 7) level = 7;
             sit_put(canvas, x + col, y, 0x2581 + level, SIT_GREEN, SIT_BLACK, SIT_ATTR_NONE);
         }
@@ -806,6 +806,7 @@ void sit_leave_raw_mode(void){
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = 0;
     sigaction(SIGWINCH, &sa, NULL);
+    _sit_term_resized = SIT_FALSE;
     _sit_raw_mode = SIT_FALSE;
 }
 
