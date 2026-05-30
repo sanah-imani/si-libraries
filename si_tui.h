@@ -796,6 +796,143 @@ void sit_enter_raw_mode(void){
     _sit_raw_mode = SIT_TRUE;
 }
 
+void sit_leave_raw_mode(void){
+    if (!_sit_raw_mode) return;
+
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &_sit_orig_termios);
+
+    struct sigaction sa;
+    sa.sa_handler = SIG_DFL;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGWINCH, &sa, NULL);
+    _sit_raw_mode = SIT_FALSE;
+}
+
+static sit_key _sit_key_from_bytes_event(sia_u8* bytes, sia_u32 num_bytes){
+    sit_key key = { SIT_KEY_NONE, 0, 0 };
+    if (!bytes || num_bytes == 0) return key;
+
+    sia_u8 b = bytes[0];
+
+    if (b == 0x1b && num_bytes > 1) {
+        if (bytes[1] == '[' && num_bytes >= 3) {
+            if (bytes[2] >= 'A' && bytes[2] <= 'D') {
+                switch (bytes[2]) {
+                case 'A': key.kind = SIT_KEY_UP; break;
+                case 'B': key.kind = SIT_KEY_DOWN; break;
+                case 'C': key.kind = SIT_KEY_RIGHT; break;
+                case 'D': key.kind = SIT_KEY_LEFT; break;
+                }
+                return key;
+            }
+            if (num_bytes >= 4 && bytes[3] == '~') {
+                switch (bytes[2]) {
+                case '1': key.kind = SIT_KEY_HOME; break;
+                case '3': key.kind = SIT_KEY_DELETE; break;
+                case '4': key.kind = SIT_KEY_END; break;
+                case '5': key.kind = SIT_KEY_PAGE_UP; break;
+                case '6': key.kind = SIT_KEY_PAGE_DOWN; break;
+                default: break;
+                }
+                return key;
+            }
+            if (bytes[2] == 'H') { key.kind = SIT_KEY_HOME; return key; }
+            if (bytes[2] == 'F') { key.kind = SIT_KEY_END; return key; }
+        }
+        key.kind = SIT_KEY_ESC;
+        return key;
+    }
+
+    if (b == 0x1b) { key.kind = SIT_KEY_ESC; return key; }
+    if (b == '\r' || b == '\n') { key.kind = SIT_KEY_ENTER; return key; }
+    if (b == 127 || b == 8) { key.kind = SIT_KEY_BACKSPACE; return key; }
+    if (b == '\t') { key.kind = SIT_KEY_TAB; return key; }
+    if (b == 3) {
+        key.kind = SIT_KEY_CHAR;
+        key.ch = 'c';
+        key.mods = SIT_MOD_CTRL;
+        return key;
+    }
+    if (b < 32) {
+        key.kind = SIT_KEY_CHAR;
+        key.ch = (char)(b + 96);
+        key.mods = SIT_MOD_CTRL;
+        return key;
+    }
+    if (b >= 32 && b <= 126) {
+        key.kind = SIT_KEY_CHAR;
+        key.ch = (char)b;
+        return key;
+    }
+    return key;
+}
+
+static sit_key _sit_key_from_escape(void) {
+    unsigned char seq[8];
+    sit_key key = { SIT_KEY_ESC, 0, 0 };
+    ssize_t n = read(STDIN_FILENO, seq, sizeof(seq));
+    if (n <= 0) return key;  /* bare Esc */
+    if (seq[0] == '[') {
+        if (n >= 2 && seq[1] >= 'A' && seq[1] <= 'D') {
+            switch (seq[1]) {
+            case 'A': key.kind = SIT_KEY_UP; break;
+            case 'B': key.kind = SIT_KEY_DOWN; break;
+            case 'C': key.kind = SIT_KEY_RIGHT; break;
+            case 'D': key.kind = SIT_KEY_LEFT; break;
+            }
+            return key;
+        }
+        /* ESC [ 1 ~ / 3 ~ / 4 ~ / 5 ~ / 6 ~ */
+        if (n >= 3 && seq[2] == '~') {
+            switch (seq[1]) {
+            case '1': key.kind = SIT_KEY_HOME; break;
+            case '3': key.kind = SIT_KEY_DELETE; break;
+            case '4': key.kind = SIT_KEY_END; break;
+            case '5': key.kind = SIT_KEY_PAGE_UP; break;
+            case '6': key.kind = SIT_KEY_PAGE_DOWN; break;
+            default: break;
+            }
+            return key;
+        }
+        /* Some terminals: ESC [ H home, ESC [ F end */
+        if (n >= 2 && seq[1] == 'H') { key.kind = SIT_KEY_HOME; return key; }
+        if (n >= 2 && seq[1] == 'F') { key.kind = SIT_KEY_END; return key; }
+    }
+    return key;  /* unknown → Esc */
+}
+
+sit_b32 sit_poll_event(sit_event* out){
+    out->quit = SIT_FALSE;
+    out->resized = SIT_FALSE;
+    out->key = (sit_key){ SIT_KEY_NONE, 0, 0 };
+
+    if (_sit_term_resized){
+        _sit_term_resized = SIT_FALSE;
+        out->resized = SIT_TRUE;
+        return SIT_TRUE;
+    }
+
+    unsigned char b;
+
+    ssize_t n = read(STDIN_FILENO, &b, 1);
+    if (n <= 0) return SIT_FALSE;
+
+    if (b == 0x1b){
+        out->key = _sit_key_from_escape();
+        return SIT_TRUE;
+    } else {
+        out->key = _sit_key_from_bytes_event(&b, 1);
+    }
+    
+    
+    if (out->key.kind == SIT_KEY_CHAR
+        && out->key.ch == 'c'
+        && (out->key.mods & SIT_MOD_CTRL))
+        out->quit = SIT_TRUE;
+    return SIT_TRUE;
+}
+
 #endif /* SI_TUI_IMPL */
 
 /*
