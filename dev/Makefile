@@ -19,3 +19,6 @@ compile_commands: si_impl.c
 
 clean:
 	rm -f si_impl si_impl.o
+
+demo_sheet: ../sheet/demo_sheet.c
+	$(CC) $(CFLAGS) -I$(ROOT) ../sheet/demo_sheet.c -o $@

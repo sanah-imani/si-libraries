@@ -784,7 +784,10 @@ void sit_enter_raw_mode(void){
     tcgetattr(STDIN_FILENO, &_sit_orig_termios);
 
     struct termios raw = _sit_orig_termios;
-    raw.c_iflag &= (tcflag_t) ~(ICANON| ECHO);
+    raw.c_iflag &= (tcflag_t)~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
+    raw.c_oflag &= (tcflag_t)~OPOST;
+    raw.c_cflag |= (tcflag_t)CS8;
+    raw.c_lflag &= (tcflag_t)~(ECHO | ICANON | IEXTEN | ISIG);
     raw.c_cc[VMIN] = 0;
     raw.c_cc[VTIME] = 1;
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);

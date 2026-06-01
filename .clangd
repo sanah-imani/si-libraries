@@ -33,9 +33,23 @@ CompileFlags:
 
 ---
 If:
-  PathMatch: dev/.*\.c
+  PathMatch: si_sheet\.h
+CompileFlags:
+  Add:
+    - -include
+    - si_arena.h
+    - -DSI_ARENA_IMPL
+    - -include
+    - si_tui.h
+    - -DSI_TUI_IMPL
+    - -DSI_SHEET_IMPL
+
+---
+If:
+  PathMatch: (dev/.*\.c|sheet/.*\.c)
 CompileFlags:
   Add:
     - -DSI_ARENA_IMPL
     - -DSI_TUI_IMPL
+    - -DSI_SHEET_IMPL
     - -DSI_PACK_IMPL
