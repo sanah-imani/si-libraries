@@ -382,6 +382,24 @@ static const sis_tab* sis_app_active_tab_const(const sis_app* app) {
     return &app->tabs[app->active];
 }
 
+static char* sis_app_copy_string(sis_app* app, const char* str) {
+    if (!app || !str) return NULL;
+    sia_u32 len = 0;
+    while (str[len]) len++;
+    char* copy = (char*)sia_push(app->arena, len + 1);
+    memcpy(copy, str, len + 1);
+    return copy;
+}
+
+static const char* sis_app_cell_display(const sis_app* app, const sis_tab* tab,
+                                        sia_u32 row, sia_u32 col) {
+    if (app->mode == SIS_MODE_INSERT
+        && row == tab->view.cursor_row
+        && col == tab->view.cursor_col)
+        return app->edit_buf;
+    return sis_cell_get(&tab->sheet, row, col);
+}
+
 static void sis_app_move_cursor(sis_app* app, sia_i32 drow, sia_i32 dcol) {
     sis_tab* tab = sis_app_active_tab(app);
     if (!tab) return;
@@ -461,6 +479,14 @@ sis_b32 sis_app_tab_new(sis_app* app) {
     return SIT_TRUE;
 }
 
+sis_b32 sis_app_tab_open(sis_app* app, const char* path) {
+    if (!sis_app_tab_new(app)) return SIT_FALSE;
+    sis_tab* tab = sis_app_active_tab(app);
+    if (tab && path && path[0])
+        tab->path = sis_app_copy_string(app, path);
+    return SIT_TRUE;
+}
+
 
 void sis_app_tab_next(sis_app* app) {
     if (!app || app->tab_count == 0) return;
@@ -496,6 +522,11 @@ void sis_app_set_viewport(sis_app* app, sia_u32 vis_rows, sia_u32 vis_cols) {
     sis_tab* tab = sis_app_active_tab(app);
     if (!tab) return;
     sis_view_ensure_visible(&tab->view, vis_rows, vis_cols);
+}
+
+void sis_app_on_resize(sis_app* app, sit_canvas* canvas, sia_u32 w, sia_u32 h) {
+    if (!app) return;
+    sit_canvas_resize(app->arena, canvas, w, h);
 }
 
 void sis_app_on_key(sis_app* app, sit_key key) {
@@ -548,4 +579,75 @@ void sis_app_on_key(sis_app* app, sit_key key) {
         }
 
     }
+
+void sis_app_render(const sis_app* app, sit_canvas* canvas) {
+    sit_clear(canvas);
+    if (!app || app->tab_count == 0) return;
+
+    const sis_tab* tab = sis_app_active_tab_const(app);
+    if (!tab) return;
+
+    sia_u32 h = canvas->height;
+    sia_u32 col_w = tab->sheet.col_width;
+    sia_u32 cell_stride = col_w + 1;
+    sia_u32 vis_cols = app->vis_cols;
+    sia_u32 vis_rows = app->vis_rows;
+    if (vis_cols == 0 || h <= SIS_TAB_BAR_H + SIS_STATUS_H) return;
+
+    sia_u32 tab_x = 0;
+    for (sia_u32 i = 0; i < app->tab_count; i++) {
+        const sis_tab* t = &app->tabs[i];
+        const char* title = t->path ? t->path : "[No Name]";
+        sia_u8 attrs = (i == app->active) ? SIT_ATTR_REVERSE : SIT_ATTR_NONE;
+        sit_textf(canvas, tab_x, 0, SIT_WHITE, SIT_BLACK, attrs,
+                  " %u:%s%s ", i + 1, title, t->dirty ? "*" : "");
+        tab_x += 12;
+    }
+
+    sia_u32 header_y = SIS_TAB_BAR_H;
+    for (sia_u32 col_idx = 0; col_idx < vis_cols; col_idx++) {
+        sia_u32 col = tab->view.scroll_col + col_idx;
+        if (col >= tab->sheet.cols) break;
+        char label[8];
+        sis_col_label(col, label, sizeof(label));
+        sia_u32 x = SIS_ROW_HDR_W + col_idx * cell_stride + 1;
+        sit_text_clip(canvas, x, header_y, col_w, label, SIT_CYAN, SIT_BLACK, SIT_ATTR_BOLD);
+    }
+
+    for (sia_u32 row_idx = 0; row_idx < vis_rows; row_idx++) {
+        sia_u32 row = tab->view.scroll_row + row_idx;
+        if (row >= tab->sheet.rows) break;
+        sia_u32 y = SIS_TAB_BAR_H + SIS_COL_HDR_H + row_idx;
+        if (y >= h - SIS_STATUS_H) break;
+
+        char row_label[8];
+        snprintf(row_label, sizeof(row_label), "%4u ", row + 1);
+        sit_text(canvas, 0, y, row_label, SIT_CYAN, SIT_BLACK, SIT_ATTR_NONE);
+
+        for (sia_u32 col_idx = 0; col_idx < vis_cols; col_idx++) {
+            sia_u32 x = SIS_ROW_HDR_W + col_idx * cell_stride;
+            sia_u32 col = tab->view.scroll_col + col_idx;
+            if (col >= tab->sheet.cols) break;
+            sit_b32 active = (row == tab->view.cursor_row && col == tab->view.cursor_col);
+            sia_u8 attrs = active ? SIT_ATTR_REVERSE : SIT_ATTR_NONE;
+            sit_put(canvas, x, y, '|', SIT_GRAY, SIT_BLACK, SIT_ATTR_NONE);
+            sit_text_clip(canvas, x + 1, y, col_w,
+                          sis_app_cell_display(app, tab, row, col),
+                          SIT_WHITE, SIT_BLACK, attrs);
+        }
+    }
+
+    char addr[16];
+    sis_cell_label(tab->view.cursor_row, tab->view.cursor_col, addr, sizeof(addr));
+    if (app->mode == SIS_MODE_COMMAND) {
+        sit_textf(canvas, 0, h - 1, SIT_WHITE, SIT_BLACK, SIT_ATTR_NONE, ":%s", app->cmd_buf);
+    } else if (app->msg[0]) {
+        sit_textf(canvas, 0, h - 1, SIT_WHITE, SIT_BLACK, SIT_ATTR_NONE, "%s", app->msg);
+    } else {
+        const char* mode = app->mode == SIS_MODE_INSERT ? "INSERT" : "NORMAL";
+        sit_textf(canvas, 0, h - 1, SIT_WHITE, SIT_BLACK, SIT_ATTR_NONE,
+                  " -- %s --  %s  %s", mode, addr,
+                  sis_app_cell_display(app, tab, tab->view.cursor_row, tab->view.cursor_col));
+    }
+}
 #endif /* SI_SHEET_IMPL */
