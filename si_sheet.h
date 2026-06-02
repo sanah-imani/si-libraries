@@ -1,6 +1,7 @@
 #ifndef SI_SHEET_H
 #define SI_SHEET_H
 
+#include <inttypes.h>
 #ifndef SIS_FUNC_DEF
 #   if defined(SIS_STATIC)
 #       define SIS_FUNC_DEF static
@@ -22,6 +23,12 @@ extern "C" {
 #define SIS_STATUS_H  1
 #define SIS_EDIT_CAP  256
 #define SIS_CMD_CAP   256
+
+
+#define SIS_TAB_BAR_H  1
+#define SIS_MSG_CAP    128
+#define SIS_PATH_CAP   512   /* max path length for cmd args / display */
+#define SIS_TAB_MAX    32    /* or grow via arena — fixed is simpler v1 */
 
 typedef sia_i32 sis_b32;
 
@@ -59,6 +66,36 @@ typedef struct {
     sit_b32   quit;
 } sis_editor;
 
+typedef struct{
+    sis_sheet sheet;
+    sis_view view;
+    char* path;
+    sit_b32 dirty;
+} sis_tab;
+
+typedef struct{
+    si_arena* arena;
+
+    sis_tab* tabs;
+    sia_u32 tab_count;
+    sia_u32 active;
+
+     /* viewport (derived each frame from terminal size) */
+     sia_u32   vis_rows;       /* grid body rows (excludes hdr/tab/status) */
+     sia_u32   vis_cols;       /* visible columns */
+
+    sis_mode  mode;           /* NORMAL | INSERT | COMMAND */
+    char      edit_buf[SIS_EDIT_CAP];
+    sia_u32   edit_len;
+    char      cmd_buf[SIS_CMD_CAP];
+    sia_u32   cmd_len;
+
+     /* feedback */
+     char      msg[SIS_MSG_CAP];   /* last error/info: "Wrote foo.csv" */
+     sia_u32   msg_ttl;            /* frames to show msg; 0 = until next key */
+     sit_b32   quit;           /* exit entire app */
+} sis_app;
+
 SIS_FUNC_DEF void        sis_sheet_init(sis_sheet* sheet, si_arena* arena,
                             sia_u32 rows, sia_u32 cols, sia_u32 col_width);
 SIS_FUNC_DEF const char* sis_cell_get(const sis_sheet* sheet, sia_u32 row, sia_u32 col);
@@ -72,6 +109,17 @@ SIS_FUNC_DEF void sis_editor_on_key(sis_editor* editor, sit_key key);
 SIS_FUNC_DEF void sis_editor_on_resize(sis_editor* editor, sit_canvas* canvas,
                             si_arena* arena, sia_u32 w, sia_u32 h);
 SIS_FUNC_DEF void sis_render(const sis_editor* editor, sit_canvas* canvas);
+
+SIS_FUNC_DEF void    sis_app_init(sis_app* app, si_arena* arena);
+SIS_FUNC_DEF void    sis_app_set_viewport(sis_app* app, sia_u32 vis_rows, sia_u32 vis_cols);
+SIS_FUNC_DEF void    sis_app_on_key(sis_app* app, sit_key key);
+SIS_FUNC_DEF void    sis_app_on_resize(sis_app* app, sit_canvas* canvas, sia_u32 w, sia_u32 h);
+SIS_FUNC_DEF void    sis_app_render(const sis_app* app, sit_canvas* canvas);
+SIS_FUNC_DEF sis_b32 sis_app_tab_new(sis_app* app);
+SIS_FUNC_DEF sis_b32 sis_app_tab_open(sis_app* app, const char* path);
+SIS_FUNC_DEF void    sis_app_tab_close(sis_app* app);
+SIS_FUNC_DEF void    sis_app_tab_next(sis_app* app);
+SIS_FUNC_DEF void    sis_app_tab_prev(sis_app* app);
 
 #ifdef __cplusplus
 }
@@ -322,4 +370,182 @@ void sis_render(const sis_editor* editor, sit_canvas* canvas) {
             sis_cell_display(editor, editor->view.cursor_row, editor->view.cursor_col));
     }
 }
+
+static sis_tab* sis_app_active_tab(sis_app* app) {
+    if (!app || app->tab_count == 0) return NULL;
+    return &app->tabs[app->active];
+}
+
+
+static const sis_tab* sis_app_active_tab_const(const sis_app* app) {
+    if (!app || app->tab_count == 0) return NULL;
+    return &app->tabs[app->active];
+}
+
+static void sis_app_move_cursor(sis_app* app, sia_i32 drow, sia_i32 dcol) {
+    sis_tab* tab = sis_app_active_tab(app);
+    if (!tab) return;
+    
+    sis_view* view = &tab->view;
+    sia_i32 row = (sia_i32)view->cursor_row + drow;
+    sia_i32 col = (sia_i32)view->cursor_col + dcol;
+    if (row < 0 || col < 0) return;
+    if ((sia_u32)row >= tab->sheet.rows || (sia_u32)col >= tab->sheet.cols) return;
+    view->cursor_row = (sia_u32)row;
+    view->cursor_col = (sia_u32)col;
+    sis_view_ensure_visible(view, app->vis_rows, app->vis_cols);
+}
+
+static void sis_app_enter_insert(sis_app* app, sit_b32 clear) {
+    sis_tab* tab = sis_app_active_tab(app);
+    if (!tab) return;
+    if (clear) {
+        app->edit_len = 0;
+        app->edit_buf[0] = '\0';
+    } else {
+        const char* existing = sis_cell_get(&tab->sheet, tab->view.cursor_row, tab->view.cursor_col);
+        app->edit_len = (sia_u32)strlen(existing);
+        if (app->edit_len >= SIS_EDIT_CAP) app->edit_len = SIS_EDIT_CAP - 1;
+        memcpy(app->edit_buf, existing, app->edit_len);
+        app->edit_buf[app->edit_len] = '\0';
+    }
+    app->mode = SIS_MODE_INSERT;
+}
+
+static void sis_app_commit_cell(sis_app* app) {
+    sis_tab* tab = sis_app_active_tab(app);
+    if (!tab) return;
+    sis_cell_set(&tab->sheet, tab->view.cursor_row, tab->view.cursor_col, app->edit_buf);
+    tab->dirty = SIT_TRUE;
+    app->edit_len = 0;
+    app->edit_buf[0] = '\0';
+    app->mode = SIS_MODE_NORMAL;
+}
+
+static void sis_app_run_command(sis_app* app) {
+    const char* cmd = app->cmd_buf;
+    if (strcmp(cmd, "q") == 0 || strcmp(cmd, "q!") == 0) {
+        sis_app_tab_close(app);
+    } else if (strcmp(cmd, "wq") == 0 || strcmp(cmd, "wq!") == 0) {
+        /* Save later; for now this behaves like close. */
+        sis_app_tab_close(app);
+    } else if (strcmp(cmd, "enew") == 0 || strcmp(cmd, "tabnew") == 0) {
+        sis_app_tab_new(app);
+    } else if (strcmp(cmd, "bn") == 0 || strcmp(cmd, "tabnext") == 0) {
+        sis_app_tab_next(app);
+    } else if (strcmp(cmd, "bp") == 0 || strcmp(cmd, "tabprev") == 0) {
+        sis_app_tab_prev(app);
+    }
+    app->cmd_len = 0;
+    app->cmd_buf[0] = '\0';
+    app->mode = SIS_MODE_NORMAL;
+}
+void sis_app_init(sis_app* app, si_arena* arena) {
+    *app = (sis_app){0};
+    app->arena = arena;
+    app->tabs = SIA_PUSH_ZERO_ARRAY(arena, sis_tab, SIS_TAB_MAX);
+    app->mode = SIS_MODE_NORMAL;
+    app->quit = SIT_FALSE;
+    sis_app_tab_new(app);
+}
+
+sis_b32 sis_app_tab_new(sis_app* app) {
+    if (!app || app->tab_count >= SIS_TAB_MAX) return SIT_FALSE;
+    sia_u32 idx = app->tab_count++;
+    sis_tab* tab = &app->tabs[idx];
+    *tab = (sis_tab){0};
+    sis_sheet_init(&tab->sheet, app->arena, 1000, 26, 10);
+    tab->path = NULL;
+    tab->dirty = SIT_FALSE;
+    app->active = idx;
+    return SIT_TRUE;
+}
+
+
+void sis_app_tab_next(sis_app* app) {
+    if (!app || app->tab_count == 0) return;
+    app->active = (app->active + 1) % app->tab_count;
+}
+
+
+void sis_app_tab_prev(sis_app* app) {
+    if (!app || app->tab_count == 0) return;
+    app->active = app->active == 0 ? app->tab_count - 1 : app->active - 1;
+}
+
+
+void sis_app_tab_close(sis_app* app) {
+    if (!app || app->tab_count == 0) return;
+    if (app->tab_count == 1) {
+        app->quit = SIT_TRUE;
+        return;
+    }
+    for (sia_u32 i = app->active; i + 1 < app->tab_count; i++)
+        app->tabs[i] = app->tabs[i + 1];
+    app->tab_count--;
+    if (app->active >= app->tab_count)
+        app->active = app->tab_count - 1;
+}
+
+void sis_app_set_viewport(sis_app* app, sia_u32 vis_rows, sia_u32 vis_cols) {
+    if (!app) return;
+
+    app->vis_rows = vis_rows;
+    app->vis_cols = vis_cols;
+
+    sis_tab* tab = sis_app_active_tab(app);
+    if (!tab) return;
+    sis_view_ensure_visible(&tab->view, vis_rows, vis_cols);
+}
+
+void sis_app_on_key(sis_app* app, sit_key key) {
+    if (!app || app->tab_count == 0) return;
+
+    switch (app->mode){
+        case SIS_MODE_NORMAL:
+            if (key.kind == SIT_KEY_CHAR && key.ch == 'h') sis_app_move_cursor(app, 0, -1);
+            else if (key.kind == SIT_KEY_CHAR && key.ch == 'j') sis_app_move_cursor(app, 1, 0);
+            else if (key.kind == SIT_KEY_CHAR && key.ch == 'k') sis_app_move_cursor(app, -1, 0);
+            else if (key.kind == SIT_KEY_CHAR && key.ch == 'l') sis_app_move_cursor(app, 0, 1);
+            else if (key.kind == SIT_KEY_LEFT)  sis_app_move_cursor(app, 0, -1);
+            else if (key.kind == SIT_KEY_RIGHT) sis_app_move_cursor(app, 0,  1);
+            else if (key.kind == SIT_KEY_UP)    sis_app_move_cursor(app, -1, 0);
+            else if (key.kind == SIT_KEY_DOWN)  sis_app_move_cursor(app,  1, 0);
+            else if (key.kind == SIT_KEY_CHAR && key.ch == 'i') sis_app_enter_insert(app, SIT_FALSE);
+            else if (key.kind == SIT_KEY_CHAR && key.ch == 'c') sis_app_enter_insert(app, SIT_TRUE);
+            else if (key.kind == SIT_KEY_ENTER) sis_app_enter_insert(app, SIT_FALSE);
+            else if (key.kind == SIT_KEY_CHAR && key.ch == ':') {
+                app->mode = SIS_MODE_COMMAND;
+                app->cmd_len = 0;
+                app->cmd_buf[0] = '\0';
+            }
+            break;
+
+        case SIS_MODE_INSERT:
+            if (key.kind == SIT_KEY_ESC || key.kind == SIT_KEY_ENTER) {
+                sis_app_commit_cell(app);
+            } else if (key.kind == SIT_KEY_BACKSPACE && app->edit_len > 0) {
+                app->edit_buf[--app->edit_len] = '\0';
+            } else if (key.kind == SIT_KEY_CHAR && app->edit_len + 1 < SIS_EDIT_CAP) {
+                app->edit_buf[app->edit_len++] = key.ch;
+                app->edit_buf[app->edit_len] = '\0';
+            }
+            break;
+        case SIS_MODE_COMMAND:
+            if (key.kind == SIT_KEY_ESC) {
+                app->cmd_len = 0;
+                app->cmd_buf[0] = '\0';
+                app->mode = SIS_MODE_NORMAL;
+            } else if (key.kind == SIT_KEY_ENTER) {
+                sis_app_run_command(app);
+            } else if (key.kind == SIT_KEY_BACKSPACE && app->cmd_len > 0) {
+                app->cmd_buf[--app->cmd_len] = '\0';
+            } else if (key.kind == SIT_KEY_CHAR && app->cmd_len + 1 < SIS_CMD_CAP) {
+                app->cmd_buf[app->cmd_len++] = key.ch;
+                app->cmd_buf[app->cmd_len] = '\0';
+            }
+            break;
+        }
+
+    }
 #endif /* SI_SHEET_IMPL */
