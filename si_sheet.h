@@ -51,6 +51,7 @@ typedef enum {
     SIS_MODE_NORMAL,
     SIS_MODE_INSERT,
     SIS_MODE_COMMAND,
+    SIS_MODE_VISUAL,
 } sis_mode;
 
 typedef struct {
@@ -71,6 +72,10 @@ typedef struct{
     sis_view view;
     char* path;
     char* title;
+
+    sia_u32 sel_row;
+    sia_u32 sel_col;
+    sit_b32 selecting;
     sit_b32 dirty;
 } sis_tab;
 
@@ -195,6 +200,12 @@ static void sis_text_slice(sit_canvas* canvas, sia_u32 x, sia_u32 y, sia_u32 max
     }
     buf[n] = '\0';
     sit_text_clip(canvas, x, y, max_w, buf, fg, bg, attrs);
+}
+
+static void sis_cell_fill(sit_canvas* canvas, sia_u32 x, sia_u32 y, sia_u32 w,
+    sit_color fg, sit_color bg, sia_u8 attrs) {
+    for (sia_u32 i = 0; i < w; i++)
+        sit_put(canvas, x + i, y, ' ', fg, bg, attrs);
 }
 
 static const char* sis_app_cell_display(const sis_app* app, const sis_tab* tab,
@@ -396,6 +407,9 @@ void sis_editor_on_key(sis_editor* editor, sit_key key) {
             editor->cmd_buf[editor->cmd_len] = '\0';
         }
         break;
+    case SIS_MODE_VISUAL:
+        editor->mode = SIS_MODE_NORMAL;
+        break;
     }
 }
 
@@ -452,6 +466,21 @@ void sis_render(const sis_editor* editor, sit_canvas* canvas) {
             " -- %s --  %s  %s", mode, addr,
             sis_cell_display(editor, editor->view.cursor_row, editor->view.cursor_col));
     }
+}
+
+static void sis_range_bounds(sia_u32 a_row, sia_u32 a_col, sia_u32 b_row, sia_u32 b_col,
+    sia_u32* min_row, sia_u32* min_col, sia_u32* max_row, sia_u32* max_col) {
+    *min_row = SIA_MIN(a_row, b_row);
+    *min_col = SIA_MIN(a_col, b_col);
+    *max_row = SIA_MAX(a_row, b_row);
+    *max_col = SIA_MAX(a_col, b_col);
+}
+
+static sit_b32 sis_tab_cell_selected(const sis_tab* tab, sia_u32 row, sia_u32 col) {
+    if (!tab->selecting) return SIT_FALSE;
+    sia_u32 min_row, min_col, max_row, max_col;
+    sis_range_bounds(tab->sel_row, tab->sel_col, row, col, &min_row, &min_col, &max_row, &max_col);
+    return row >= min_row && col >= min_col && row <= max_row && col <= max_col;
 }
 
 static sis_tab* sis_app_active_tab(sis_app* app) {
@@ -655,6 +684,14 @@ void sis_app_on_key(sis_app* app, sit_key key) {
                 app->mode = SIS_MODE_COMMAND;
                 app->cmd_len = 0;
                 app->cmd_buf[0] = '\0';
+            } else if (key.kind == SIT_KEY_CHAR && key.ch == 'v') {
+                sis_tab* tab = sis_app_active_tab(app);
+                if (tab) {
+                    tab->selecting = SIT_TRUE;
+                    tab->sel_row = tab->view.cursor_row;
+                    tab->sel_col = tab->view.cursor_col;
+                    app->mode = SIS_MODE_VISUAL;
+                }
             }
             break;
 
@@ -682,6 +719,29 @@ void sis_app_on_key(sis_app* app, sit_key key) {
                 app->cmd_buf[app->cmd_len] = '\0';
             }
             break;
+        case SIS_MODE_VISUAL: {
+            sis_tab* tab = sis_app_active_tab(app);
+            if (key.kind == SIT_KEY_ESC) {
+                if (tab) tab->selecting = SIT_FALSE;
+                app->mode = SIS_MODE_NORMAL;
+            } else if (key.kind == SIT_KEY_CHAR && key.ch == 'h') {
+                sis_app_move_cursor(app, 0, -1);
+            } else if (key.kind == SIT_KEY_CHAR && key.ch == 'j') {
+                sis_app_move_cursor(app, 1, 0);
+            } else if (key.kind == SIT_KEY_CHAR && key.ch == 'k') {
+                sis_app_move_cursor(app, -1, 0);
+            } else if (key.kind == SIT_KEY_CHAR && key.ch == 'l') {
+                sis_app_move_cursor(app, 0, 1);
+            } else if (key.kind == SIT_KEY_LEFT) {
+                sis_app_move_cursor(app, 0, -1);
+            } else if (key.kind == SIT_KEY_RIGHT) {
+                sis_app_move_cursor(app, 0, 1);
+            } else if (key.kind == SIT_KEY_UP) {
+                sis_app_move_cursor(app, -1, 0);
+            } else if (key.kind == SIT_KEY_DOWN) {
+                sis_app_move_cursor(app, 1, 0);
+            }
+        } break;
         }
 
     }
@@ -739,10 +799,12 @@ void sis_app_render(const sis_app* app, sit_canvas* canvas) {
                 if (col >= tab->sheet.cols) break;
 
                 sit_b32 active = (row == tab->view.cursor_row && col == tab->view.cursor_col);
-                sia_u8 attrs = active ? SIT_ATTR_REVERSE : SIT_ATTR_NONE;
+                sit_b32 selected = sis_tab_cell_selected(tab, row, col);
+                sia_u8 attrs = (active || selected) ? SIT_ATTR_REVERSE : SIT_ATTR_NONE;
                 const char* text = sis_app_cell_display(app, tab, row, col);
 
                 sit_put(canvas, x, y + line, '|', SIT_GRAY, SIT_BLACK, SIT_ATTR_NONE);
+                sis_cell_fill(canvas, x + 1, y + line, col_w, SIT_WHITE, SIT_BLACK, attrs);
                 sis_text_slice(canvas, x + 1, y + line, col_w, text, line * col_w,
                     SIT_WHITE, SIT_BLACK, attrs);
             }
