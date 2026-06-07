@@ -70,6 +70,7 @@ typedef struct{
     sis_sheet sheet;
     sis_view view;
     char* path;
+    char* title;
     sit_b32 dirty;
 } sis_tab;
 
@@ -79,6 +80,7 @@ typedef struct{
     sis_tab* tabs;
     sia_u32 tab_count;
     sia_u32 active;
+    sia_u32 next_tab_id;
 
      /* viewport (derived each frame from terminal size) */
      sia_u32   vis_rows;       /* grid body rows (excludes hdr/tab/status) */
@@ -161,6 +163,87 @@ void sis_cell_set(sis_sheet* sheet, sia_u32 row, sia_u32 col, const char* value)
     char* copy = (char*)sia_push(sheet->arena, len + 1);
     memcpy(copy, value, len + 1);
     sheet->cells[idx] = copy;
+}
+
+static sia_u32 sis_text_len(const char* text) {
+    sia_u32 len = 0;
+    if (!text) return 0;
+    while (text[len]) len++;
+    return len;
+}
+
+static sia_u32 sis_wrap_lines(const char* text, sia_u32 col_w){
+    sia_u32 len = sis_text_len(text);
+    if (col_w == 0 || len <= col_w) return 1;
+    return (len + col_w - 1) / col_w;
+}
+
+static void sis_text_slice(sit_canvas* canvas, sia_u32 x, sia_u32 y, sia_u32 max_w,
+    const char* text, sia_u32 offset,
+    sit_color fg, sit_color bg, sia_u8 attrs) {
+    if (!canvas || !text || max_w == 0) return;
+
+    sia_u32 len = sis_text_len(text);
+    if (offset >= len) return;
+
+    char buf[256];
+
+    sia_u32 n = 0;
+    while (n + 1 < sizeof(buf) && n < max_w && offset + n < len){
+        buf[n] = text[offset + n];
+        n++;
+    }
+    buf[n] = '\0';
+    sit_text_clip(canvas, x, y, max_w, buf, fg, bg, attrs);
+}
+
+static const char* sis_app_cell_display(const sis_app* app, const sis_tab* tab,
+    sia_u32 row, sia_u32 col);
+
+static sia_u32 sis_app_row_height(const sis_app* app, const sis_tab* tab, sia_u32 row) {
+
+    sia_u32 row_h = 1;
+    sia_u32 col_w = tab->sheet.col_width;
+    sia_u32 vis_cols = app->vis_cols;
+
+    for (sia_u32 col_idx = 0; col_idx < vis_cols; col_idx++) {
+        sia_u32 col = tab->view.scroll_col + col_idx;
+        if (col >= tab->sheet.cols) break;
+        const char* text = sis_app_cell_display(app, tab, row, col);
+        sia_u32 lines = sis_wrap_lines(text, col_w);
+        if (lines > row_h) row_h = lines;
+    }
+    return row_h;
+
+}
+
+static void sis_app_ensure_col_visible(sis_app* app, sis_tab* tab) {
+    sis_view* view = &tab->view;
+    if (view->cursor_col < view->scroll_col)
+        view->scroll_col = view->cursor_col;
+    if (app->vis_cols > 0 && view->cursor_col >= view->scroll_col + app->vis_cols)
+        view->scroll_col = view->cursor_col - app->vis_cols + 1;
+}
+static sia_u32 sis_app_cursor_visual_y(const sis_app* app, const sis_tab* tab) {
+    sia_u32 y = 0;
+    for (sia_u32 row = tab->view.scroll_row; row < tab->view.cursor_row; row++) {
+        y += sis_app_row_height(app, tab, row);
+        if (y >= app->vis_rows) break;
+    }
+    return y;
+}
+
+static void sis_app_ensure_visible_wrapped(sis_app* app, sis_tab* tab) {
+    if (!app || !tab) return;
+    sis_view* view = &tab->view;
+    if (view->cursor_row < view->scroll_row)
+        view->scroll_row = view->cursor_row;
+    while (view->scroll_row < view->cursor_row) {
+        sia_u32 cursor_y = sis_app_cursor_visual_y(app, tab);
+        if (cursor_y < app->vis_rows) break;
+        view->scroll_row++;
+    }
+    sis_app_ensure_col_visible(app, tab);
 }
 
 static void sis_col_label(sia_u32 col, char* buf, sia_u32 buf_cap) {
@@ -391,6 +474,20 @@ static char* sis_app_copy_string(sis_app* app, const char* str) {
     return copy;
 }
 
+static const char* sis_app_skip_spaces(const char* str) {
+    while (str && (*str == ' ' || *str == '\t')) str++;
+    return str;
+}
+
+static sit_b32 sis_app_set_tab_title(sis_app* app, const char* title) {
+    sis_tab* tab = sis_app_active_tab(app);
+    title = sis_app_skip_spaces(title);
+    if (!tab || !title || !title[0]) return SIT_FALSE;
+    tab->title = sis_app_copy_string(app, title);
+    snprintf(app->msg, sizeof(app->msg), "Tab renamed to %s", tab->title);
+    return SIT_TRUE;
+}
+
 static const char* sis_app_cell_display(const sis_app* app, const sis_tab* tab,
                                         sia_u32 row, sia_u32 col) {
     if (app->mode == SIS_MODE_INSERT
@@ -411,7 +508,7 @@ static void sis_app_move_cursor(sis_app* app, sia_i32 drow, sia_i32 dcol) {
     if ((sia_u32)row >= tab->sheet.rows || (sia_u32)col >= tab->sheet.cols) return;
     view->cursor_row = (sia_u32)row;
     view->cursor_col = (sia_u32)col;
-    sis_view_ensure_visible(view, app->vis_rows, app->vis_cols);
+    sis_app_ensure_visible_wrapped(app, tab);
 }
 
 static void sis_app_enter_insert(sis_app* app, sit_b32 clear) {
@@ -453,6 +550,10 @@ static void sis_app_run_command(sis_app* app) {
         sis_app_tab_next(app);
     } else if (strcmp(cmd, "bp") == 0 || strcmp(cmd, "tabprev") == 0) {
         sis_app_tab_prev(app);
+    } else if (strncmp(cmd, "name", 4) == 0 && (cmd[4] == '\0' || cmd[4] == ' ' || cmd[4] == '\t')) {
+        sis_app_set_tab_title(app, cmd + 4);
+    } else if (strncmp(cmd, "tabname", 7) == 0 && (cmd[7] == '\0' || cmd[7] == ' ' || cmd[7] == '\t')) {
+        sis_app_set_tab_title(app, cmd + 7);
     }
     app->cmd_len = 0;
     app->cmd_buf[0] = '\0';
@@ -474,6 +575,9 @@ sis_b32 sis_app_tab_new(sis_app* app) {
     *tab = (sis_tab){0};
     sis_sheet_init(&tab->sheet, app->arena, 1000, 26, 10);
     tab->path = NULL;
+    char title[32];
+    snprintf(title, sizeof(title), "Sheet %u", ++app->next_tab_id);
+    tab->title = sis_app_copy_string(app, title);
     tab->dirty = SIT_FALSE;
     app->active = idx;
     return SIT_TRUE;
@@ -482,8 +586,10 @@ sis_b32 sis_app_tab_new(sis_app* app) {
 sis_b32 sis_app_tab_open(sis_app* app, const char* path) {
     if (!sis_app_tab_new(app)) return SIT_FALSE;
     sis_tab* tab = sis_app_active_tab(app);
-    if (tab && path && path[0])
+    if (tab && path && path[0]) {
         tab->path = sis_app_copy_string(app, path);
+        tab->title = sis_app_copy_string(app, path);
+    }
     return SIT_TRUE;
 }
 
@@ -521,7 +627,7 @@ void sis_app_set_viewport(sis_app* app, sia_u32 vis_rows, sia_u32 vis_cols) {
 
     sis_tab* tab = sis_app_active_tab(app);
     if (!tab) return;
-    sis_view_ensure_visible(&tab->view, vis_rows, vis_cols);
+    sis_app_ensure_visible_wrapped(app, tab);
 }
 
 void sis_app_on_resize(sis_app* app, sit_canvas* canvas, sia_u32 w, sia_u32 h) {
@@ -591,13 +697,12 @@ void sis_app_render(const sis_app* app, sit_canvas* canvas) {
     sia_u32 col_w = tab->sheet.col_width;
     sia_u32 cell_stride = col_w + 1;
     sia_u32 vis_cols = app->vis_cols;
-    sia_u32 vis_rows = app->vis_rows;
     if (vis_cols == 0 || h <= SIS_TAB_BAR_H + SIS_STATUS_H) return;
 
     sia_u32 tab_x = 0;
     for (sia_u32 i = 0; i < app->tab_count; i++) {
         const sis_tab* t = &app->tabs[i];
-        const char* title = t->path ? t->path : "[No Name]";
+        const char* title = t->title ? t->title : (t->path ? t->path : "[No Name]");
         sia_u8 attrs = (i == app->active) ? SIT_ATTR_REVERSE : SIT_ATTR_NONE;
         sit_textf(canvas, tab_x, 0, SIT_WHITE, SIT_BLACK, attrs,
                   " %u:%s%s ", i + 1, title, t->dirty ? "*" : "");
@@ -614,27 +719,35 @@ void sis_app_render(const sis_app* app, sit_canvas* canvas) {
         sit_text_clip(canvas, x, header_y, col_w, label, SIT_CYAN, SIT_BLACK, SIT_ATTR_BOLD);
     }
 
-    for (sia_u32 row_idx = 0; row_idx < vis_rows; row_idx++) {
-        sia_u32 row = tab->view.scroll_row + row_idx;
-        if (row >= tab->sheet.rows) break;
-        sia_u32 y = SIS_TAB_BAR_H + SIS_COL_HDR_H + row_idx;
-        if (y >= h - SIS_STATUS_H) break;
+    sia_u32 y = SIS_TAB_BAR_H + SIS_COL_HDR_H;
+    sia_u32 status_y = h - SIS_STATUS_H;
+
+    for (sia_u32 row = tab->view.scroll_row; row < tab->sheet.rows && y < status_y; row++) {
+        sia_u32 row_h = sis_app_row_height(app, tab, row);
+        if (row_h == 0) row_h = 1;
 
         char row_label[8];
         snprintf(row_label, sizeof(row_label), "%4u ", row + 1);
-        sit_text(canvas, 0, y, row_label, SIT_CYAN, SIT_BLACK, SIT_ATTR_NONE);
 
-        for (sia_u32 col_idx = 0; col_idx < vis_cols; col_idx++) {
-            sia_u32 x = SIS_ROW_HDR_W + col_idx * cell_stride;
-            sia_u32 col = tab->view.scroll_col + col_idx;
-            if (col >= tab->sheet.cols) break;
-            sit_b32 active = (row == tab->view.cursor_row && col == tab->view.cursor_col);
-            sia_u8 attrs = active ? SIT_ATTR_REVERSE : SIT_ATTR_NONE;
-            sit_put(canvas, x, y, '|', SIT_GRAY, SIT_BLACK, SIT_ATTR_NONE);
-            sit_text_clip(canvas, x + 1, y, col_w,
-                          sis_app_cell_display(app, tab, row, col),
-                          SIT_WHITE, SIT_BLACK, attrs);
+        for (sia_u32 line = 0; line < row_h && y + line < status_y; line++) {
+            if (line == 0)
+                sit_text(canvas, 0, y + line, row_label, SIT_CYAN, SIT_BLACK, SIT_ATTR_NONE);
+
+            for (sia_u32 col_idx = 0; col_idx < vis_cols; col_idx++) {
+                sia_u32 x = SIS_ROW_HDR_W + col_idx * cell_stride;
+                sia_u32 col = tab->view.scroll_col + col_idx;
+                if (col >= tab->sheet.cols) break;
+
+                sit_b32 active = (row == tab->view.cursor_row && col == tab->view.cursor_col);
+                sia_u8 attrs = active ? SIT_ATTR_REVERSE : SIT_ATTR_NONE;
+                const char* text = sis_app_cell_display(app, tab, row, col);
+
+                sit_put(canvas, x, y + line, '|', SIT_GRAY, SIT_BLACK, SIT_ATTR_NONE);
+                sis_text_slice(canvas, x + 1, y + line, col_w, text, line * col_w,
+                    SIT_WHITE, SIT_BLACK, attrs);
+            }
         }
+        y += row_h;
     }
 
     char addr[16];
