@@ -79,6 +79,12 @@ typedef struct{
     sit_b32 dirty;
 } sis_tab;
 
+typedef struct {
+    sia_u32 rows;
+    sia_u32 cols;
+    char** cells;
+} sis_yank_buffer;
+
 typedef struct{
     si_arena* arena;
 
@@ -96,6 +102,9 @@ typedef struct{
     sia_u32   edit_len;
     char      cmd_buf[SIS_CMD_CAP];
     sia_u32   cmd_len;
+
+    /* clipboard */
+    sis_yank_buffer yank;
 
      /* feedback */
      char      msg[SIS_MSG_CAP];   /* last error/info: "Wrote foo.csv" */
@@ -476,10 +485,90 @@ static void sis_range_bounds(sia_u32 a_row, sia_u32 a_col, sia_u32 b_row, sia_u3
     *max_col = SIA_MAX(a_col, b_col);
 }
 
+static sis_tab* sis_app_active_tab(sis_app* app);
+
+static sit_b32 sis_app_selection_bounds(const sis_app* app, sia_u32* min_row, sia_u32* min_col, sia_u32* max_row, sia_u32* max_col) {
+    sis_tab* tab = sis_app_active_tab((sis_app*)app);
+    if (!tab || !tab->selecting) return SIT_FALSE;
+    sis_range_bounds(tab->sel_row, tab->sel_col,
+        tab->view.cursor_row, tab->view.cursor_col,
+        min_row, min_col, max_row, max_col);
+    return SIT_TRUE;
+}
+
+static char* sis_app_copy_string(sis_app* app, const char* str) {
+    if (!app || !str) return NULL;
+    sia_u32 len = 0;
+    while (str[len]) len++;
+    char* copy = (char*)sia_push(app->arena, len + 1);
+    memcpy(copy, str, len + 1);
+    return copy;
+}
+static void sis_app_yank_selection(sis_app* app) {
+    sia_u32 min_row, min_col, max_row, max_col;
+    if (!sis_app_selection_bounds(app, &min_row, &min_col, &max_row, &max_col)) return;
+    sis_yank_buffer* yank = &app->yank;
+    
+    sis_tab* tab = sis_app_active_tab(app);
+    if (!tab) return;
+
+    sia_u32 rows = max_row - min_row + 1;
+    sia_u32 cols = max_col - min_col + 1;
+    yank->rows = rows;
+    yank->cols = cols;
+    yank->cells = SIA_PUSH_ZERO_ARRAY(app->arena, char*, rows * cols);
+    for (sia_u32 row = 0; row < rows; row++) {
+        for (sia_u32 col = 0; col < cols; col++) {
+            const char* value = sis_cell_get(&tab->sheet, min_row + row, min_col + col);
+
+            if (value && value[0]){
+                yank->cells[row * cols + col] = sis_app_copy_string(app, value);
+            }
+        }
+    }
+
+    tab->selecting = SIT_FALSE;
+    app->mode = SIS_MODE_NORMAL;
+    snprintf(app->msg, sizeof(app->msg), "Yanked %ux%u cells", rows, cols);
+}   
+
+
+static void sis_app_paste_yank(sis_app* app) {
+    sis_yank_buffer* yank = &app->yank;
+    if (!app || !yank->cells || yank->rows == 0 || yank->cols == 0) {
+        snprintf(app->msg, sizeof(app->msg), "Nothing yanked");
+        return;
+    }
+
+    sis_tab* tab = sis_app_active_tab(app);
+    if (!tab) return;
+
+    sia_u32 start_row = tab->view.cursor_row;
+    sia_u32 start_col = tab->view.cursor_col;
+
+    for (sia_u32 row = 0; row < yank->rows; row++) {
+        for (sia_u32 col = 0; col < yank->cols; col++) {
+            sia_u32 dst_row = start_row + row;
+            sia_u32 dst_col = start_col + col;
+            if (dst_row >= tab->sheet.rows || dst_col >= tab->sheet.cols) continue;
+
+            const char* value = yank->cells[row * yank->cols + col];
+            sis_cell_set(&tab->sheet, dst_row, dst_col, value ? value : "");
+        }
+    }
+
+    tab->dirty = SIT_TRUE;
+    tab->selecting = SIT_FALSE;
+    app->mode = SIS_MODE_NORMAL;
+    snprintf(app->msg, sizeof(app->msg), "Pasted %ux%u cells", yank->rows, yank->cols);
+}
+
 static sit_b32 sis_tab_cell_selected(const sis_tab* tab, sia_u32 row, sia_u32 col) {
     if (!tab->selecting) return SIT_FALSE;
     sia_u32 min_row, min_col, max_row, max_col;
-    sis_range_bounds(tab->sel_row, tab->sel_col, row, col, &min_row, &min_col, &max_row, &max_col);
+    sis_range_bounds(tab->sel_row, tab->sel_col,
+        tab->view.cursor_row, tab->view.cursor_col,
+        &min_row, &min_col, &max_row, &max_col);
     return row >= min_row && col >= min_col && row <= max_row && col <= max_col;
 }
 
@@ -492,15 +581,6 @@ static sis_tab* sis_app_active_tab(sis_app* app) {
 static const sis_tab* sis_app_active_tab_const(const sis_app* app) {
     if (!app || app->tab_count == 0) return NULL;
     return &app->tabs[app->active];
-}
-
-static char* sis_app_copy_string(sis_app* app, const char* str) {
-    if (!app || !str) return NULL;
-    sia_u32 len = 0;
-    while (str[len]) len++;
-    char* copy = (char*)sia_push(app->arena, len + 1);
-    memcpy(copy, str, len + 1);
-    return copy;
 }
 
 static const char* sis_app_skip_spaces(const char* str) {
@@ -692,6 +772,8 @@ void sis_app_on_key(sis_app* app, sit_key key) {
                     tab->sel_col = tab->view.cursor_col;
                     app->mode = SIS_MODE_VISUAL;
                 }
+            } else if (key.kind == SIT_KEY_CHAR && key.ch == 'p') {
+                sis_app_paste_yank(app);
             }
             break;
 
@@ -740,6 +822,10 @@ void sis_app_on_key(sis_app* app, sit_key key) {
                 sis_app_move_cursor(app, -1, 0);
             } else if (key.kind == SIT_KEY_DOWN) {
                 sis_app_move_cursor(app, 1, 0);
+            } else if (key.kind == SIT_KEY_CHAR && key.ch == 'y') {
+                sis_app_yank_selection(app);
+            } else if (key.kind == SIT_KEY_CHAR && key.ch == 'p') {
+                sis_app_paste_yank(app);
             }
         } break;
         }
@@ -816,10 +902,13 @@ void sis_app_render(const sis_app* app, sit_canvas* canvas) {
     sis_cell_label(tab->view.cursor_row, tab->view.cursor_col, addr, sizeof(addr));
     if (app->mode == SIS_MODE_COMMAND) {
         sit_textf(canvas, 0, h - 1, SIT_WHITE, SIT_BLACK, SIT_ATTR_NONE, ":%s", app->cmd_buf);
-    } else if (app->msg[0]) {
+    } else if (app->msg[0] && app->mode == SIS_MODE_NORMAL) {
         sit_textf(canvas, 0, h - 1, SIT_WHITE, SIT_BLACK, SIT_ATTR_NONE, "%s", app->msg);
     } else {
-        const char* mode = app->mode == SIS_MODE_INSERT ? "INSERT" : "NORMAL";
+        const char* mode =
+            app->mode == SIS_MODE_INSERT ? "INSERT" :
+            app->mode == SIS_MODE_VISUAL ? "VISUAL" :
+            "NORMAL";
         sit_textf(canvas, 0, h - 1, SIT_WHITE, SIT_BLACK, SIT_ATTR_NONE,
                   " -- %s --  %s  %s", mode, addr,
                   sis_app_cell_display(app, tab, tab->view.cursor_row, tab->view.cursor_col));
