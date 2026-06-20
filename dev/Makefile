@@ -2,8 +2,11 @@ CC      ?= clang
 CFLAGS  ?= -std=c11 -Wall -Wextra -g
 DEFS    := -DSI_ARENA_IMPL -DSI_TUI_IMPL -DSI_PACK_IMPL
 ROOT    := ..
+TINYEXPR_DIR := $(ROOT)/third_party/tinyexpr
+TINYEXPR_DEFS := -DSIS_USE_TINYEXPR
+TINYEXPR_INC := -I$(TINYEXPR_DIR)
 
-.PHONY: all check compile_commands clean
+.PHONY: all check compile_commands clean demo_sheet
 
 all: check
 
@@ -18,7 +21,8 @@ compile_commands: si_impl.c
 	bear -- $(MAKE) si_impl
 
 clean:
-	rm -f si_impl si_impl.o
+	rm -f si_impl si_impl.o demo_sheet
 
-demo_sheet: ../sheet/demo_sheet.c
-	$(CC) $(CFLAGS) -I$(ROOT) ../sheet/demo_sheet.c -o $@
+demo_sheet: ../sheet/demo_sheet.c $(TINYEXPR_DIR)/tinyexpr.c
+	$(CC) $(CFLAGS) $(TINYEXPR_DEFS) -I$(ROOT) $(TINYEXPR_INC) \
+		../sheet/demo_sheet.c $(TINYEXPR_DIR)/tinyexpr.c -lm -o $@

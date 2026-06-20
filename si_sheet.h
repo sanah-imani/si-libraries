@@ -146,7 +146,12 @@ SIS_FUNC_DEF void    sis_app_tab_prev(sis_app* app);
 #ifdef SI_SHEET_IMPL
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+
+#ifdef SIS_USE_TINYEXPR
+#include "tinyexpr.h"
+#endif
 
 void sis_sheet_init(sis_sheet* sheet, si_arena* arena, sia_u32 rows, sia_u32 cols, sia_u32 col_width) {
     sheet->arena = arena;
@@ -219,6 +224,7 @@ static void sis_cell_fill(sit_canvas* canvas, sia_u32 x, sia_u32 y, sia_u32 w,
 
 static const char* sis_app_cell_display(const sis_app* app, const sis_tab* tab,
     sia_u32 row, sia_u32 col);
+static double sis_eval_formula(const sis_sheet* sheet, const char* expr, sia_u32 depth);
 
 static sia_u32 sis_app_row_height(const sis_app* app, const sis_tab* tab, sia_u32 row) {
 
@@ -603,7 +609,14 @@ static const char* sis_app_cell_display(const sis_app* app, const sis_tab* tab,
         && row == tab->view.cursor_row
         && col == tab->view.cursor_col)
         return app->edit_buf;
-    return sis_cell_get(&tab->sheet, row, col);
+
+    const char* raw = sis_cell_get(&tab->sheet, row, col);
+    if (!raw || raw[0] != '=') return raw;
+
+    static char formula_buf[64];
+    double value = sis_eval_formula(&tab->sheet, raw + 1, 0);
+    snprintf(formula_buf, sizeof(formula_buf), "%.10g", value);
+    return formula_buf;
 }
 
 static void sis_app_move_cursor(sis_app* app, sia_i32 drow, sia_i32 dcol) {
@@ -914,4 +927,263 @@ void sis_app_render(const sis_app* app, sit_canvas* canvas) {
                   sis_app_cell_display(app, tab, tab->view.cursor_row, tab->view.cursor_col));
     }
 }
+
+static const char* sis_formula_skip_ws(const char* text) {
+    while (*text == ' ' || *text == '\t') text++;
+    return text;
+}
+
+static sis_b32 sis_is_alpha(char c){
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+}
+
+static sis_b32 sis_is_digit(char c){
+    return c >= '0' && c <= '9';
+}
+
+static char sis_upper(char c){
+    return (c >= 'a' && c <= 'z') ? (char)(c - 'a' + 'A') : c; 
+}
+
+static sis_b32 sis_parse_cell_ref(const char* s, sia_u32* out_row, sia_u32* out_col,
+    const char** out_end) {
+    s = sis_formula_skip_ws(s);
+    if (!sis_is_alpha(*s)) return SIT_FALSE;
+
+    sia_u32 col = 0;
+    while (sis_is_alpha(*s)) {
+        col = col * 26 + (sia_u32)(sis_upper(*s) - 'A' + 1);
+        s++;
+    }
+    if (!sis_is_digit(*s)) return SIT_FALSE;
+
+    sia_u32 row = 0;
+    while (sis_is_digit(*s)) {
+        row = row * 10 + (sia_u32)(*s - '0');
+        s++;
+    }
+
+    if (row == 0 || col == 0) return SIT_FALSE;
+    *out_row = row - 1;
+    *out_col = col - 1;
+    if (out_end) *out_end = s;
+    return SIT_TRUE;
+}
+
+static double sis_cell_number(const sis_sheet* sheet, sia_u32 row, sia_u32 col, sia_u32 depth){
+    if (!sheet || row >= sheet->rows || col >= sheet->cols) return 0.0;
+    if (depth > 32) return 0.0; /* crude cycle guard */
+
+    const char* raw = sis_cell_get(sheet, row, col);
+    if (!raw || !raw[0]) return 0.0;
+
+    if (raw[0] == '=') {
+        return sis_eval_formula(sheet, raw + 1, depth + 1);
+    }
+    char* end = NULL;
+    double value = strtod(raw, &end);
+    return end != raw ? value : 0.0;
+}
+
+static double sis_eval_atom(const sis_sheet* sheet, const char* text, const char** out_end, sia_u32 depth) {
+    text = sis_formula_skip_ws(text);
+
+    sia_u32 row, col;
+
+    const char* end = NULL;
+
+    if (sis_parse_cell_ref(text, &row, &col, &end)){
+        if (out_end) *out_end = end;
+        return sis_cell_number(sheet, row, col, depth + 1);
+    }
+
+    char* num_end = NULL;
+    double value = strtod(text, &num_end);
+    if (num_end != text) {
+        if (out_end) *out_end = num_end;
+        return value;
+    }
+
+    if (out_end) *out_end = text;
+    return 0.0;
+}
+
+
+static sis_b32 sis_parse_range(const char* text, sia_u32* row0, sia_u32* col0, sia_u32* row1, sia_u32* col1, const char** out_end){
+    const char* end = NULL;
+    if (!sis_parse_cell_ref(text, row0, col0, &end)){
+        return SIT_FALSE;
+    }
+
+    end = sis_formula_skip_ws(end);
+    if (*end != ':') return SIT_FALSE;
+    end++;
+
+    if (!sis_parse_cell_ref(end, row1, col1, &end)) return SIT_FALSE;
+    if (*row1 < *row0) { sia_u32 t = *row0; *row0 = *row1; *row1 = t; }
+    if (*col1 < *col0) { sia_u32 t = *col0; *col0 = *col1; *col1 = t; }
+    if (out_end) *out_end = end;
+    return SIT_TRUE;
+}
+
+static sis_b32 sis_match_func(const char* s, const char* name, const char** after_open) {
+    while (*name) {
+        if (sis_upper(*s++) != *name++) return SIT_FALSE;
+    }
+    s = sis_formula_skip_ws(s);
+    if (*s != '(') return SIT_FALSE;
+    *after_open = s + 1;
+    return SIT_TRUE;
+}
+
+static sis_b32 sis_eval_range_func(const sis_sheet* sheet, const char* expr,
+    double* out_value, sia_u32 depth) {
+    const char* args = NULL;
+    int mode = 0; /* 1 sum, 2 avg, 3 min, 4 max */
+
+    if (sis_match_func(expr, "SUM", &args)) mode = 1;
+    else if (sis_match_func(expr, "AVG", &args)) mode = 2;
+    else if (sis_match_func(expr, "MIN", &args)) mode = 3;
+    else if (sis_match_func(expr, "MAX", &args)) mode = 4;
+    else return SIT_FALSE;
+
+    sia_u32 r0, c0, r1, c1;
+    const char* end = NULL;
+    if (!sis_parse_range(args, &r0, &c0, &r1, &c1, &end)) return SIT_FALSE;
+
+    end = sis_formula_skip_ws(end);
+    if (*end != ')') return SIT_FALSE;
+
+    double acc = 0.0;
+    sia_u32 count = 0;
+    for (sia_u32 r = r0; r <= r1 && r < sheet->rows; r++) {
+        for (sia_u32 c = c0; c <= c1 && c < sheet->cols; c++) {
+            double v = sis_cell_number(sheet, r, c, depth + 1);
+            if (count == 0) acc = v;
+            else if (mode == 1 || mode == 2) acc += v;
+            else if (mode == 3 && v < acc) acc = v;
+            else if (mode == 4 && v > acc) acc = v;
+            count++;
+        }
+    }
+
+    if (mode == 2 && count > 0) acc /= (double)count;
+    *out_value = acc;
+    return SIT_TRUE;
+}
+
+#ifdef SIS_USE_TINYEXPR
+#ifndef SIS_FORMULA_MAX_VARS
+#define SIS_FORMULA_MAX_VARS 64
+#endif
+
+#ifndef SIS_FORMULA_VAR_NAME_CAP
+#define SIS_FORMULA_VAR_NAME_CAP 16
+#endif
+
+typedef struct {
+    char names[SIS_FORMULA_MAX_VARS][SIS_FORMULA_VAR_NAME_CAP];
+    double values[SIS_FORMULA_MAX_VARS];
+    te_variable vars[SIS_FORMULA_MAX_VARS];
+    int count;
+} sis_formula_vars;
+
+static sis_b32 sis_formula_add_ref(const sis_sheet* sheet, sis_formula_vars* vars,
+                                   const char* begin, const char* end, sia_u32 depth) {
+    sia_u32 name_len = (sia_u32)(end - begin);
+    if (name_len == 0 || name_len >= SIS_FORMULA_VAR_NAME_CAP) return SIT_FALSE;
+
+    for (int i = 0; i < vars->count; i++) {
+        if (strlen(vars->names[i]) == name_len &&
+            strncmp(vars->names[i], begin, name_len) == 0) {
+            return SIT_TRUE;
+        }
+    }
+
+    if (vars->count >= SIS_FORMULA_MAX_VARS) return SIT_FALSE;
+
+    sia_u32 row = 0;
+    sia_u32 col = 0;
+    const char* parsed_end = NULL;
+    if (!sis_parse_cell_ref(begin, &row, &col, &parsed_end) || parsed_end != end) {
+        return SIT_FALSE;
+    }
+
+    int idx = vars->count++;
+    memcpy(vars->names[idx], begin, name_len);
+    vars->names[idx][name_len] = '\0';
+    vars->values[idx] = sis_cell_number(sheet, row, col, depth + 1);
+    vars->vars[idx].name = vars->names[idx];
+    vars->vars[idx].address = &vars->values[idx];
+    vars->vars[idx].type = TE_VARIABLE;
+    vars->vars[idx].context = NULL;
+    return SIT_TRUE;
+}
+
+static sis_b32 sis_formula_collect_refs(const sis_sheet* sheet, const char* expr,
+                                        sis_formula_vars* vars, sia_u32 depth) {
+    const char* cursor = expr;
+    while (*cursor) {
+        sia_u32 row = 0;
+        sia_u32 col = 0;
+        const char* end = NULL;
+
+        if (sis_parse_cell_ref(cursor, &row, &col, &end) && end > cursor) {
+            (void)row;
+            (void)col;
+            if (!sis_formula_add_ref(sheet, vars, cursor, end, depth)) {
+                return SIT_FALSE;
+            }
+            cursor = end;
+        } else {
+            cursor++;
+        }
+    }
+    return SIT_TRUE;
+}
+
+static sis_b32 sis_eval_formula_tinyexpr(const sis_sheet* sheet, const char* expr,
+                                         double* out_value, sia_u32 depth) {
+    sis_formula_vars vars = {0};
+    if (!sis_formula_collect_refs(sheet, expr, &vars, depth)) {
+        return SIT_FALSE;
+    }
+
+    int err = 0;
+    te_expr* compiled = te_compile(expr, vars.vars, vars.count, &err);
+    if (!compiled) return SIT_FALSE;
+
+    *out_value = te_eval(compiled);
+    te_free(compiled);
+    return SIT_TRUE;
+}
+#endif
+
+static double sis_eval_formula(const sis_sheet* sheet, const char* expr, sia_u32 depth) {
+    if (depth > 32) return 0.0;
+    double func_value = 0.0;
+    if (sis_eval_range_func(sheet, expr, &func_value, depth)) {
+        return func_value;
+    }
+#ifdef SIS_USE_TINYEXPR
+    double tinyexpr_value = 0.0;
+    if (sis_eval_formula_tinyexpr(sheet, expr, &tinyexpr_value, depth)) {
+        return tinyexpr_value;
+    }
+#endif
+    const char* end = NULL;
+    double lhs = sis_eval_atom(sheet, expr, &end, depth);
+    end = sis_formula_skip_ws(end);
+    if (*end == '\0') return lhs;
+    char op = *end++;
+    double rhs = sis_eval_atom(sheet, end, &end, depth);
+    switch (op) {
+        case '+': return lhs + rhs;
+        case '-': return lhs - rhs;
+        case '*': return lhs * rhs;
+        case '/': return rhs != 0.0 ? lhs / rhs : 0.0;
+        default:  return lhs;
+    }
+}
+
 #endif /* SI_SHEET_IMPL */
