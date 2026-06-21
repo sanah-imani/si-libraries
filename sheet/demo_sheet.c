@@ -4,7 +4,7 @@
 #include "../si_tui.h"
 #define SI_SHEET_IMPL
 #include "../si_sheet.h"
-int main(void) {
+int main(int argc, char** argv) {
     si_arena* arena = sia_create(&(sia_desc){ .desired_max_size = SIA_MiB(4) });
     sit_enter_alt_screen();
     sit_hide_cursor();
@@ -14,16 +14,22 @@ int main(void) {
     sit_canvas* canvas = sit_canvas_create(arena, w, h);
     sis_app app;
     sis_app_init(&app, arena);
-    sis_tab* tab = &app.tabs[app.active];
-    sis_cell_set(&tab->sheet, 0, 0, "10");
-    sis_cell_set(&tab->sheet, 0, 1, "5");
-    sis_cell_set(&tab->sheet, 0, 2, "=A1+B1");
-    sis_cell_set(&tab->sheet, 1, 0, "=(A1+B1)*2");
-    sis_cell_set(&tab->sheet, 1, 1, "=SUM(A1:B1)");
-    sis_cell_set(&tab->sheet, 2, 0, "Name");
-    sis_cell_set(&tab->sheet, 2, 1, "Qty");
-    sis_cell_set(&tab->sheet, 3, 0, "Apple");
-    sis_cell_set(&tab->sheet, 3, 1, "3");
+
+    if (argc > 1) {
+        for (int i = 1; i < argc; i++)
+            sis_app_tab_open(&app, argv[i]);
+    } else {
+        sis_tab* tab = &app.tabs[app.active];
+        sis_cell_set(&tab->sheet, 0, 0, "10");
+        sis_cell_set(&tab->sheet, 0, 1, "5");
+        sis_cell_set(&tab->sheet, 0, 2, "=A1+B1");
+        sis_cell_set(&tab->sheet, 1, 0, "=(A1+B1)*2");
+        sis_cell_set(&tab->sheet, 1, 1, "=SUM(A1:B1)");
+        sis_cell_set(&tab->sheet, 2, 0, "Name");
+        sis_cell_set(&tab->sheet, 2, 1, "Qty");
+        sis_cell_set(&tab->sheet, 3, 0, "Apple");
+        sis_cell_set(&tab->sheet, 3, 1, "3");
+    }
     for (;;) {
         sis_tab* active = &app.tabs[app.active];
         sia_u32 data_h = h - SIS_TAB_BAR_H - SIS_COL_HDR_H - SIS_STATUS_H;

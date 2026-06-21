@@ -80,6 +80,12 @@ typedef struct{
 } sis_tab;
 
 typedef struct {
+    const char* data;
+    sia_u32 len;
+    sia_u32 pos;
+}   sis_csv_reader;
+
+typedef struct {
     sia_u32 rows;
     sia_u32 cols;
     char** cells;
@@ -136,6 +142,10 @@ SIS_FUNC_DEF sis_b32 sis_app_tab_open(sis_app* app, const char* path);
 SIS_FUNC_DEF void    sis_app_tab_close(sis_app* app);
 SIS_FUNC_DEF void    sis_app_tab_next(sis_app* app);
 SIS_FUNC_DEF void    sis_app_tab_prev(sis_app* app);
+
+SIS_FUNC_DEF sis_b32 sis_sheet_save_csv(const sis_sheet* sheet, const char* path, char* err, sia_u32 errlen);
+SIS_FUNC_DEF sis_b32 sis_sheet_load_csv(sis_sheet* sheet,
+    const char* path, char* err, sia_u32 errlen);
 
 #ifdef __cplusplus
 }
@@ -359,6 +369,219 @@ static void sis_run_command(sis_editor* ed) {
     ed->mode = SIS_MODE_NORMAL;
 }
 
+static void sis_sheet_clear_cells(sis_sheet* sheet){
+    if (!sheet || !sheet->cells) return;
+    for (sia_u32 i = 0; i < sheet->rows * sheet->cols; i++)
+        sheet->cells[i] = NULL;
+}
+
+
+static void sis_sheet_used_bounds(const sis_sheet* sheet,
+    sia_u32* out_rows, sia_u32* out_cols) {
+    sia_u32 max_row = 0;
+    sia_u32 max_col = 0;
+    for (sia_u32 r = 0; r < sheet->rows; r++) {
+        for (sia_u32 c = 0; c < sheet->cols; c++) {
+            const char* value = sis_cell_get(sheet, r, c);
+            if (value && value[0]) {
+                if (r + 1 > max_row) max_row = r + 1;
+                if (c + 1 > max_col) max_col = c + 1;
+            }
+        }
+    }
+    *out_rows = max_row;
+    *out_cols = max_col;
+}
+
+static sis_b32 sis_csv_needs_quote(const char* text) {
+    if (!text) return SIT_FALSE;
+    for (const char* p = text; *p; p++) {
+        if (*p == ',' || *p == '"' || *p == '\n' || *p == '\r')
+            return SIT_TRUE;
+    }
+    return SIT_FALSE;
+}
+
+static void sis_csv_write_field(FILE* fp, const char* text){
+    if (!text) text = "";
+
+    if (!sis_csv_needs_quote(text)){
+        fputs(text, fp);
+        return;
+    }
+
+    fputc('"', fp);
+    for (const char* p = text; *p; p++) {
+        if (*p == '"') fputc('"', fp);
+        fputc(*p, fp);
+    }
+    fputc('"', fp);
+}
+
+
+static void sis_set_error(char* err, sia_u32 err_cap, const char* msg) {
+    if (!err || err_cap == 0) return;
+    snprintf(err, err_cap, "%s", msg ? msg : "error");
+}
+
+static int sis_csv_peek(const sis_csv_reader* r){
+    return (r->pos < r->len) ? (unsigned char)r->data[r->pos] : -1;
+}
+
+static int sis_csv_get(sis_csv_reader* r){
+    if (r->pos >= r->len) return -1;
+    return (unsigned char)r->data[r->pos++];
+}
+
+static sis_b32 sis_csv_read_field(sis_csv_reader* r, char* buf, sia_u32 buf_cap, int* out_eol){
+    sia_u32 len = 0;
+    int c = sis_csv_peek(r);
+
+    *out_eol = 0;
+
+    if (c == '"') {
+        sis_csv_get(r); /* consume opening quote */
+        while ((c = sis_csv_get(r)) >= 0) {
+            if (c == '"') {
+                if (sis_csv_peek(r) == '"') {
+                    sis_csv_get(r);
+                    if (len + 1 >= buf_cap) return SIT_FALSE;
+                    buf[len++] = '"';
+                } else {
+                    break;
+                }
+            } else {
+                if (len + 1 >= buf_cap) return SIT_FALSE;
+                buf[len++] = (char)c;
+            }
+        }
+    } else {
+        while ((c = sis_csv_peek(r)) >= 0 && c != ',' && c != '\n' && c != '\r') {
+            sis_csv_get(r);
+            if (len + 1 >= buf_cap) return SIT_FALSE;
+            buf[len++] = (char)c;
+        }
+    }
+    buf[len] = '\0';
+    c = sis_csv_peek(r);
+    if (c == ',') {
+        sis_csv_get(r);
+    } else if (c == '\r') {
+        sis_csv_get(r);
+        if (sis_csv_peek(r) == '\n') sis_csv_get(r);
+        *out_eol = 1;
+    } else if (c == '\n') {
+        sis_csv_get(r);
+        *out_eol = 1;
+    } else if (c < 0) {
+        *out_eol = 1;
+    }
+    return SIT_TRUE;
+
+}
+sis_b32 sis_sheet_save_csv(const sis_sheet* sheet, const char* path, char* err, sia_u32 errlen){
+    if (!sheet || !path || !path[0]){
+        sis_set_error(err, errlen, "No file name");
+        return SIT_FALSE;
+    }
+
+    FILE* fp = fopen(path, "wb");
+
+    if (!fp){
+        sis_set_error(err, errlen, "Could not open file");
+        return SIT_FALSE;
+    }
+
+    sia_u32 used_rows = 0;
+    sia_u32 used_cols = 0;
+
+    sis_sheet_used_bounds(sheet, &used_rows, &used_cols);
+
+    for (sia_u32 r = 0; r < used_rows; r++){
+        for (sia_u32 c = 0; c < used_cols; c++){
+            if (c > 0) fputc(',', fp);
+            sis_csv_write_field(fp, sis_cell_get(sheet, r, c));
+        }
+        fputc('\n', fp);
+    }
+
+    if (ferror(fp)) {
+        fclose(fp);
+        sis_set_error(err, errlen, "Write failed");
+        return SIT_FALSE;
+    }
+    fclose(fp);
+    return SIT_TRUE;
+}
+
+sis_b32 sis_sheet_load_csv(sis_sheet* sheet,
+    const char* path, char* err, sia_u32 err_cap) {
+    if (!sheet || !path || !path[0]) {
+        sis_set_error(err, err_cap, "No file name");
+        return SIT_FALSE;
+    }
+    FILE* fp = fopen(path, "rb");
+    if (!fp) {
+        sis_set_error(err, err_cap, "Cannot open file");
+        return SIT_FALSE;
+    }
+    if (fseek(fp, 0, SEEK_END) != 0) {
+        fclose(fp);
+        sis_set_error(err, err_cap, "Cannot read file");
+        return SIT_FALSE;
+    }
+    long file_size = ftell(fp);
+    if (file_size < 0) {
+        fclose(fp);
+        sis_set_error(err, err_cap, "Cannot read file");
+        return SIT_FALSE;
+    }
+    if (fseek(fp, 0, SEEK_SET) != 0) {
+        fclose(fp);
+        sis_set_error(err, err_cap, "Cannot read file");
+        return SIT_FALSE;
+    }
+    char* file_data = (char*)sia_push(sheet->arena, (sia_u64)file_size + 1);
+    size_t read_bytes = fread(file_data, 1, (size_t)file_size, fp);
+    fclose(fp);
+    if (read_bytes != (size_t)file_size) {
+        sis_set_error(err, err_cap, "Read failed");
+        return SIT_FALSE;
+    }
+    file_data[file_size] = '\0';
+    sis_sheet_clear_cells(sheet);
+    sis_csv_reader reader = {
+        .data = file_data,
+        .len = (sia_u32)file_size,
+        .pos = 0,
+    };
+    char field[SIS_EDIT_CAP];
+    sia_u32 row = 0;
+    sia_u32 col = 0;
+    int eol = 0;
+    while (reader.pos < reader.len || (row == 0 && col == 0)) {
+        if (!sis_csv_read_field(&reader, field, sizeof(field), &eol)) {
+            sis_set_error(err, err_cap, "CSV field too large");
+            return SIT_FALSE;
+        }
+        if (field[0]) {
+            if (row >= sheet->rows || col >= sheet->cols) {
+                sis_set_error(err, err_cap, "CSV exceeds sheet bounds");
+                return SIT_FALSE;
+            }
+            sis_cell_set(sheet, row, col, field);
+        }
+        col++;
+        if (eol) {
+            row++;
+            col = 0;
+        }
+        if (reader.pos >= reader.len)
+            break;
+    }
+    return SIT_TRUE;
+}
+
 /* Editor API*/
 void sis_editor_init(sis_editor* editor, si_arena* arena, sia_u32 rows, sia_u32 cols) {
     *editor = (sis_editor){0};
@@ -492,6 +715,8 @@ static void sis_range_bounds(sia_u32 a_row, sia_u32 a_col, sia_u32 b_row, sia_u3
 }
 
 static sis_tab* sis_app_active_tab(sis_app* app);
+static sis_b32 sis_app_tab_save(sis_app* app, sis_tab* tab, const char* path);
+static sis_b32 sis_app_tab_load(sis_app* app, sis_tab* tab, const char* path);
 
 static sit_b32 sis_app_selection_bounds(const sis_app* app, sia_u32* min_row, sia_u32* min_col, sia_u32* max_row, sia_u32* max_col) {
     sis_tab* tab = sis_app_active_tab((sis_app*)app);
@@ -661,11 +886,50 @@ static void sis_app_commit_cell(sis_app* app) {
 
 static void sis_app_run_command(sis_app* app) {
     const char* cmd = app->cmd_buf;
-    if (strcmp(cmd, "q") == 0 || strcmp(cmd, "q!") == 0) {
+    sis_tab* tab = sis_app_active_tab(app);
+
+    if (strcmp(cmd, "q") == 0) {
+        if (tab && tab->dirty) {
+            snprintf(app->msg, sizeof(app->msg), "Unsaved changes; use :q!");
+        } else {
+            sis_app_tab_close(app);
+        }
+    } else if (strcmp(cmd, "q!") == 0) {
         sis_app_tab_close(app);
-    } else if (strcmp(cmd, "wq") == 0 || strcmp(cmd, "wq!") == 0) {
-        /* Save later; for now this behaves like close. */
-        sis_app_tab_close(app);
+    } else if (strcmp(cmd, "wq") == 0) {
+        if (tab && tab->path && tab->path[0]) {
+            if (sis_app_tab_save(app, tab, tab->path))
+                sis_app_tab_close(app);
+        } else {
+            snprintf(app->msg, sizeof(app->msg), "No file name");
+        }
+    } else if (strcmp(cmd, "wq!") == 0) {
+        if (tab && tab->path && tab->path[0]) {
+            if (sis_app_tab_save(app, tab, tab->path))
+                sis_app_tab_close(app);
+        } else {
+            sis_app_tab_close(app);
+        }
+    } else if (strcmp(cmd, "w") == 0) {
+        if (tab && tab->path && tab->path[0]) {
+            sis_app_tab_save(app, tab, tab->path);
+        } else {
+            snprintf(app->msg, sizeof(app->msg), "No file name");
+        }
+    } else if (cmd[0] == 'w' && (cmd[1] == ' ' || cmd[1] == '\t')) {
+        const char* path = sis_app_skip_spaces(cmd + 1);
+        if (tab && path && path[0]) {
+            sis_app_tab_save(app, tab, path);
+        } else {
+            snprintf(app->msg, sizeof(app->msg), "No file name");
+        }
+    } else if (cmd[0] == 'e' && (cmd[1] == ' ' || cmd[1] == '\t')) {
+        const char* path = sis_app_skip_spaces(cmd + 1);
+        if (path && path[0]) {
+            sis_app_tab_open(app, path);
+        } else {
+            snprintf(app->msg, sizeof(app->msg), "No file name");
+        }
     } else if (strcmp(cmd, "enew") == 0 || strcmp(cmd, "tabnew") == 0) {
         sis_app_tab_new(app);
     } else if (strcmp(cmd, "bn") == 0 || strcmp(cmd, "tabnext") == 0) {
@@ -677,10 +941,12 @@ static void sis_app_run_command(sis_app* app) {
     } else if (strncmp(cmd, "tabname", 7) == 0 && (cmd[7] == '\0' || cmd[7] == ' ' || cmd[7] == '\t')) {
         sis_app_set_tab_title(app, cmd + 7);
     }
+
     app->cmd_len = 0;
     app->cmd_buf[0] = '\0';
     app->mode = SIS_MODE_NORMAL;
 }
+
 void sis_app_init(sis_app* app, si_arena* arena) {
     *app = (sis_app){0};
     app->arena = arena;
@@ -705,14 +971,45 @@ sis_b32 sis_app_tab_new(sis_app* app) {
     return SIT_TRUE;
 }
 
+static sis_b32 sis_app_tab_save(sis_app* app, sis_tab* tab, const char* path) {
+    if (!app || !tab) return SIT_FALSE;
+    char err[SIS_MSG_CAP];
+    if (!sis_sheet_save_csv(&tab->sheet, path, err, sizeof(err))) {
+        snprintf(app->msg, sizeof(app->msg), "%s", err);
+        return SIT_FALSE;
+    }
+    tab->path = sis_app_copy_string(app, path);
+    tab->title = sis_app_copy_string(app, path);
+    tab->dirty = SIT_FALSE;
+    snprintf(app->msg, sizeof(app->msg), "Wrote %s", path);
+    return SIT_TRUE;
+}
+
+static sis_b32 sis_app_tab_load(sis_app* app, sis_tab* tab, const char* path){
+    if (!app || !tab) return SIT_FALSE;
+
+    char err[SIS_MSG_CAP];
+    if (!sis_sheet_load_csv(&tab->sheet,  path, err, sizeof(err))){
+        snprintf(app->msg, sizeof(app->msg), "%s", err);
+        return SIT_FALSE;
+    }
+
+    tab->path = sis_app_copy_string(app, path);
+    tab->title = sis_app_copy_string(app, path);
+    tab->dirty = SIT_FALSE;
+    tab->view.cursor_row = 0;
+    tab->view.cursor_col = 0;
+    tab->view.scroll_row = 0;
+    tab->view.scroll_col = 0;
+    snprintf(app->msg, sizeof(app->msg), "Opened %s", path);
+    return SIT_TRUE;
+}
+
 sis_b32 sis_app_tab_open(sis_app* app, const char* path) {
     if (!sis_app_tab_new(app)) return SIT_FALSE;
     sis_tab* tab = sis_app_active_tab(app);
-    if (tab && path && path[0]) {
-        tab->path = sis_app_copy_string(app, path);
-        tab->title = sis_app_copy_string(app, path);
-    }
-    return SIT_TRUE;
+    if (!tab || !path || !path[0]) return SIT_FALSE;
+    return sis_app_tab_load(app, tab, path);
 }
 
 
